@@ -1,15 +1,15 @@
 /**
  * 评论事件类型
- * - intro: 开头或过渡
- * - emotion_shift: 情绪变化
- * - rhythm_entry: 节奏进入或变化
- * - pause: 停顿或静寂
- * - theme_return: 主题再次出现
  */
-export type EventType = "intro" | "emotion_shift" | "rhythm_entry" | "pause" | "theme_return";
+export type EventType =
+  | "intro"
+  | "emotion_shift"
+  | "rhythm_entry"
+  | "pause"
+  | "theme_return";
 
 /**
- * AI 伙伴评论
+ * 人工预设的伙伴评论
  */
 export interface DemoComment {
   id: string;
@@ -19,12 +19,24 @@ export interface DemoComment {
 }
 
 /**
+ * 播放器向页面提供的状态
+ */
+export interface PlaybackSnapshot {
+  currentTime: number;
+  duration: number;
+  isPlaying: boolean;
+  isSeeking: boolean;
+}
+
+/**
  * 评论反馈类型
+ * 阶段5使用
  */
 export type CommentFeedback = "agree" | "different";
 
 /**
  * 共同聆听记录中的消息
+ * 阶段5使用
  */
 export type ListeningMessage =
   | {
