@@ -127,3 +127,26 @@ textarea:disabled {
     padding: 12px;
   }
 }
+/* 当前评论轻微淡入 */
+
+.current-comment-enter {
+  animation: current-comment-enter 320ms ease-out;
+}
+
+@keyframes current-comment-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .current-comment-enter {
+    animation: none;
+  }
+}
