@@ -1,60 +1,111 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type CSSProperties,
+} from "react";
+
+import type { PlaybackSnapshot } from "@/types/music";
 import { formatTime } from "@/utils/formatTime";
 
 interface MusicPlayerProps {
   audioFile: File | null;
+
+  /**
+   * 每当播放器状态发生变化时，
+   * 把状态传给父页面。
+   */
+  onPlaybackStateChange?: (
+    snapshot: PlaybackSnapshot,
+  ) => void;
 }
 
-interface AudioState {
-  isPlaying: boolean;
-  currentTime: number;
-  duration: number;
+interface AudioState extends PlaybackSnapshot {
   isLoading: boolean;
   error: string;
 }
 
-/**
- * 音乐播放器
- * - 使用原生 audio 元素
- * - 管理播放状态
- * - 处理进度条
- * - 释放 Object URL
- */
-export default function MusicPlayer({ audioFile }: MusicPlayerProps) {
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const objectUrlRef = useRef<string>("");
-  const [state, setState] = useState<AudioState>({
-    isPlaying: false,
-    currentTime: 0,
-    duration: 0,
-    isLoading: false,
-    error: "",
-  });
+const INITIAL_STATE: AudioState = {
+  isPlaying: false,
+  currentTime: 0,
+  duration: 0,
+  isSeeking: false,
+  isLoading: false,
+  error: "",
+};
 
-  // 创建和管理 Object URL
+export default function MusicPlayer({
+  audioFile,
+  onPlaybackStateChange,
+}: MusicPlayerProps) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const objectUrlRef = useRef("");
+
+  const [state, setState] =
+    useState<AudioState>(INITIAL_STATE);
+
+  /**
+   * 把播放器状态传给父组件。
+   */
   useEffect(() => {
+    onPlaybackStateChange?.({
+      currentTime: state.currentTime,
+      duration: state.duration,
+      isPlaying: state.isPlaying,
+      isSeeking: state.isSeeking,
+    });
+  }, [
+    onPlaybackStateChange,
+    state.currentTime,
+    state.duration,
+    state.isPlaying,
+    state.isSeeking,
+  ]);
+
+  /**
+   * 当用户选择或更换音乐时，
+   * 创建新的本地Object URL。
+   */
+  useEffect(() => {
+    const audio = audioRef.current;
+
+    if (!audio) {
+      return;
+    }
+
+    /**
+     * 停止旧音乐。
+     */
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+
+    /**
+     * 释放旧Object URL。
+     */
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = "";
+    }
+
+    setState(INITIAL_STATE);
+
     if (!audioFile) {
       return;
     }
 
-    // 释放旧的 URL
-    if (objectUrlRef.current) {
-      URL.revokeObjectURL(objectUrlRef.current);
-    }
+    const objectUrl = URL.createObjectURL(audioFile);
 
-    // 创建新的 URL
-    const url = URL.createObjectURL(audioFile);
-    objectUrlRef.current = url;
-
-    if (audioRef.current) {
-      audioRef.current.src = url;
-      // 状态重置由事件监听器负责处理（loadstart、error等）
-    }
+    objectUrlRef.current = objectUrl;
+    audio.src = objectUrl;
+    audio.load();
 
     return () => {
-      // 组件卸载或文件改变时释放 URL
+      audio.pause();
+
       if (objectUrlRef.current) {
         URL.revokeObjectURL(objectUrlRef.current);
         objectUrlRef.current = "";
@@ -62,225 +113,362 @@ export default function MusicPlayer({ audioFile }: MusicPlayerProps) {
     };
   }, [audioFile]);
 
-  // 音频事件监听
+  /**
+   * 监听原生audio事件。
+   */
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio) return;
+
+    if (!audio) {
+      return;
+    }
 
     const handleTimeUpdate = () => {
-      setState((prev) => ({
-        ...prev,
+      setState((previous) => ({
+        ...previous,
         currentTime: audio.currentTime,
       }));
     };
 
     const handleLoadedMetadata = () => {
-      setState((prev) => ({
-        ...prev,
-        duration: audio.duration,
+      setState((previous) => ({
+        ...previous,
+        duration: Number.isFinite(audio.duration)
+          ? audio.duration
+          : 0,
         isLoading: false,
       }));
     };
 
+    const handleDurationChange = () => {
+      setState((previous) => ({
+        ...previous,
+        duration: Number.isFinite(audio.duration)
+          ? audio.duration
+          : 0,
+      }));
+    };
+
     const handlePlay = () => {
-      setState((prev) => ({
-        ...prev,
+      setState((previous) => ({
+        ...previous,
         isPlaying: true,
         error: "",
       }));
     };
 
     const handlePause = () => {
-      setState((prev) => ({
-        ...prev,
+      setState((previous) => ({
+        ...previous,
         isPlaying: false,
       }));
     };
 
     const handleEnded = () => {
-      setState((prev) => ({
-        ...prev,
+      setState((previous) => ({
+        ...previous,
         isPlaying: false,
-        currentTime: 0,
+        currentTime:
+          audio.duration || previous.currentTime,
+      }));
+    };
+
+    const handleSeeking = () => {
+      setState((previous) => ({
+        ...previous,
+        isSeeking: true,
+      }));
+    };
+
+    const handleSeeked = () => {
+      setState((previous) => ({
+        ...previous,
+        currentTime: audio.currentTime,
+        isSeeking: false,
       }));
     };
 
     const handleError = () => {
-      setState((prev) => ({
-        ...prev,
+      setState((previous) => ({
+        ...previous,
         isPlaying: false,
-        error: "这个音频无法播放，请尝试其他文件。",
+        isLoading: false,
+        error:
+          "这个音频无法播放，请尝试其他文件。",
       }));
     };
 
     const handleLoadStart = () => {
-      setState((prev) => ({
-        ...prev,
+      setState((previous) => ({
+        ...previous,
         isLoading: true,
         isPlaying: false,
         currentTime: 0,
         duration: 0,
+        isSeeking: false,
         error: "",
       }));
     };
 
-    audio.addEventListener("timeupdate", handleTimeUpdate);
-    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
+    audio.addEventListener(
+      "timeupdate",
+      handleTimeUpdate,
+    );
+
+    audio.addEventListener(
+      "loadedmetadata",
+      handleLoadedMetadata,
+    );
+
+    audio.addEventListener(
+      "durationchange",
+      handleDurationChange,
+    );
+
     audio.addEventListener("play", handlePlay);
     audio.addEventListener("pause", handlePause);
     audio.addEventListener("ended", handleEnded);
+    audio.addEventListener("seeking", handleSeeking);
+    audio.addEventListener("seeked", handleSeeked);
     audio.addEventListener("error", handleError);
-    audio.addEventListener("loadstart", handleLoadStart);
+    audio.addEventListener(
+      "loadstart",
+      handleLoadStart,
+    );
 
     return () => {
-      audio.removeEventListener("timeupdate", handleTimeUpdate);
-      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      audio.removeEventListener(
+        "timeupdate",
+        handleTimeUpdate,
+      );
+
+      audio.removeEventListener(
+        "loadedmetadata",
+        handleLoadedMetadata,
+      );
+
+      audio.removeEventListener(
+        "durationchange",
+        handleDurationChange,
+      );
+
       audio.removeEventListener("play", handlePlay);
-      audio.removeEventListener("pause", handlePause);
-      audio.removeEventListener("ended", handleEnded);
-      audio.removeEventListener("error", handleError);
-      audio.removeEventListener("loadstart", handleLoadStart);
+      audio.removeEventListener(
+        "pause",
+        handlePause,
+      );
+
+      audio.removeEventListener(
+        "ended",
+        handleEnded,
+      );
+
+      audio.removeEventListener(
+        "seeking",
+        handleSeeking,
+      );
+
+      audio.removeEventListener(
+        "seeked",
+        handleSeeked,
+      );
+
+      audio.removeEventListener(
+        "error",
+        handleError,
+      );
+
+      audio.removeEventListener(
+        "loadstart",
+        handleLoadStart,
+      );
     };
   }, []);
 
+  /**
+   * 播放或暂停。
+   */
   const handlePlayPause = async () => {
     const audio = audioRef.current;
-    if (!audio) return;
+
+    if (!audio || !audioFile || state.isLoading) {
+      return;
+    }
 
     try {
       if (state.isPlaying) {
         audio.pause();
       } else {
-        const playPromise = audio.play();
-        if (playPromise) {
-          await playPromise;
-        }
+        await audio.play();
       }
     } catch {
-      setState((prev) => ({
-        ...prev,
-        error: "播放失败，请检查文件。",
+      setState((previous) => ({
+        ...previous,
         isPlaying: false,
+        error: "播放失败，请检查文件。",
       }));
     }
   };
 
-  const handleProgressChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  /**
+   * 用户拖动进度条。
+   */
+  const handleProgressChange = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
     const audio = audioRef.current;
-    if (!audio) return;
 
-    const newTime = parseFloat(e.currentTarget.value);
-    audio.currentTime = newTime;
+    if (!audio) {
+      return;
+    }
 
-    setState((prev) => ({
-      ...prev,
-      currentTime: newTime,
+    const nextTime = Number(
+      event.currentTarget.value,
+    );
+
+    if (!Number.isFinite(nextTime)) {
+      return;
+    }
+
+    audio.currentTime = nextTime;
+
+    setState((previous) => ({
+      ...previous,
+      currentTime: nextTime,
     }));
   };
 
-  const isDisabled = !audioFile;
-  const fileName = audioFile?.name || "";
-  const progressValue = state.isLoading ? 0 : state.currentTime;
-  const progressMax = Number.isFinite(state.duration) ? state.duration : 0;
+  const duration = Number.isFinite(state.duration)
+    ? state.duration
+    : 0;
+
+  const currentTime = Number.isFinite(
+    state.currentTime,
+  )
+    ? Math.min(
+        state.currentTime,
+        duration || state.currentTime,
+      )
+    : 0;
+
+  const isDisabled =
+    !audioFile || state.isLoading;
 
   return (
-    <div style={styles.container}>
-      <audio ref={audioRef} />
+    <section
+      style={styles.container}
+      aria-label="音乐播放器"
+    >
+      <audio ref={audioRef} preload="metadata" />
 
-      {audioFile && <div style={styles.fileName}>{fileName}</div>}
+      {audioFile && (
+        <p style={styles.fileName}>
+          {audioFile.name}
+        </p>
+      )}
 
-      <div style={styles.controlsContainer}>
-        <button
-          style={{
-            ...styles.button,
-            ...(isDisabled ? styles.buttonDisabled : {}),
-          }}
-          onClick={handlePlayPause}
-          disabled={isDisabled}
-          aria-label={state.isPlaying ? "暂停" : "播放"}
-        >
-          {state.isPlaying ? "⏸ 暂停" : "▶ 播放"}
-        </button>
-      </div>
+      <button
+        type="button"
+        onClick={handlePlayPause}
+        disabled={isDisabled}
+        style={{
+          ...styles.button,
+          ...(isDisabled
+            ? styles.buttonDisabled
+            : {}),
+        }}
+      >
+        {state.isLoading
+          ? "正在读取…"
+          : state.isPlaying
+            ? "⏸ 暂停"
+            : "▶ 播放"}
+      </button>
 
       {audioFile && (
         <>
-          <div style={styles.timeDisplay}>
-            <span>{formatTime(state.currentTime)}</span>
-            <span>/</span>
-            <span>{formatTime(state.duration)}</span>
-          </div>
-
           <input
-            type="range"
-            min="0"
-            max={progressMax}
-            value={progressValue}
-            onChange={handleProgressChange}
-            disabled={isDisabled}
-            style={styles.progressBar}
             aria-label="播放进度"
+            type="range"
+            min={0}
+            max={duration}
+            step={0.01}
+            value={
+              duration > 0 ? currentTime : 0
+            }
+            onChange={handleProgressChange}
+            disabled={duration <= 0}
+            style={styles.progressBar}
           />
+
+          <p style={styles.timeDisplay}>
+            {formatTime(currentTime)} /{" "}
+            {formatTime(duration)}
+          </p>
         </>
       )}
 
-      {state.error && <div style={styles.error}>{state.error}</div>}
-    </div>
+      {state.error && (
+        <p role="alert" style={styles.error}>
+          {state.error}
+        </p>
+      )}
+    </section>
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
+const styles: Record<string, CSSProperties> = {
   container: {
+    width: "100%",
+    maxWidth: "420px",
     display: "flex",
     flexDirection: "column",
-    gap: "16px",
-    width: "100%",
-    maxWidth: "400px",
+    alignItems: "stretch",
+    gap: "14px",
+    padding: "20px",
+    border: "1px solid var(--border-light)",
+    borderRadius: "16px",
+    backgroundColor: "var(--bg-secondary)",
   },
+
   fileName: {
-    fontSize: "13px",
+    margin: 0,
     color: "var(--text-secondary)",
-    wordBreak: "break-all",
+    fontSize: "13px",
     textAlign: "center",
+    overflowWrap: "anywhere",
   },
-  controlsContainer: {
-    display: "flex",
-    gap: "8px",
-    justifyContent: "center",
-  },
+
   button: {
-    padding: "8px 16px",
+    alignSelf: "center",
+    minWidth: "110px",
+    padding: "10px 18px",
+    borderRadius: "999px",
     backgroundColor: "var(--accent)",
     color: "var(--bg-primary)",
-    borderRadius: "4px",
-    fontSize: "13px",
-    fontWeight: "500",
-    cursor: "pointer",
-    transition: "all 0.2s ease",
+    fontSize: "14px",
+    fontWeight: 650,
   },
+
   buttonDisabled: {
-    opacity: 0.5,
     cursor: "not-allowed",
+    opacity: 0.5,
   },
+
   timeDisplay: {
-    display: "flex",
-    justifyContent: "center",
-    gap: "8px",
-    fontSize: "12px",
+    margin: 0,
     color: "var(--text-secondary)",
+    fontSize: "12px",
+    textAlign: "center",
   },
+
   progressBar: {
     width: "100%",
-    height: "4px",
-    cursor: "pointer",
-    WebkitAppearance: "none",
-    appearance: "none",
-    backgroundColor: "var(--border)",
-    borderRadius: "2px",
-    outline: "none",
-  } as React.CSSProperties,
+  },
+
   error: {
-    color: "#ff6b6b",
+    margin: 0,
+    color: "#ff8a8a",
     fontSize: "12px",
     textAlign: "center",
   },

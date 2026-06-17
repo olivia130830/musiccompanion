@@ -127,3 +127,295 @@ textarea:disabled {
     padding: 12px;
   }
 }
+/* 当前评论轻微淡入 */
+
+.current-comment-enter {
+  animation: current-comment-enter 320ms ease-out;
+}
+
+@keyframes current-comment-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .current-comment-enter {
+    animation: none;
+  }
+}
+/* ==============================
+   阶段5：共同聆听记录
+   ============================== */
+
+.listening-history-section {
+  width: 100%;
+  max-width: 520px;
+  padding: 20px;
+  border: 1px solid var(--border-light);
+  border-radius: 18px;
+  background: var(--bg-secondary);
+}
+
+.history-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.history-eyebrow {
+  margin: 0 0 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+}
+
+.history-title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.history-count {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.listening-history {
+  max-height: 380px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 4px 4px 0;
+  scroll-behavior: smooth;
+}
+
+.history-empty {
+  margin: 0;
+  padding: 24px 10px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.8;
+  text-align: center;
+}
+
+.history-message {
+  width: min(88%, 390px);
+  padding: 13px 15px;
+  border-radius: 15px;
+}
+
+.history-message-companion {
+  align-self: flex-start;
+  border: 1px solid var(--border-light);
+  border-bottom-left-radius: 5px;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.history-message-user {
+  align-self: flex-end;
+  border-bottom-right-radius: 5px;
+  background: var(--accent);
+  color: var(--bg-primary);
+}
+
+.message-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 7px;
+  font-size: 11px;
+  opacity: 0.72;
+}
+
+.message-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+/* ==============================
+   阶段5：评论反馈
+   ============================== */
+
+.comment-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 11px;
+}
+
+.feedback-button {
+  padding: 6px 10px;
+  border: 1px solid var(--border-light);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.feedback-button:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.feedback-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.feedback-button-selected {
+  border-color: var(--accent);
+  background: color-mix(
+    in srgb,
+    var(--accent) 18%,
+    transparent
+  );
+  color: var(--text-primary);
+}
+
+/* ==============================
+   阶段5：用户回复框
+   ============================== */
+
+.reply-box {
+  width: 100%;
+  max-width: 520px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid var(--border-light);
+  border-radius: 18px;
+  background: var(--bg-secondary);
+}
+
+.reply-label {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.reply-textarea {
+  width: 100%;
+  min-height: 84px;
+  resize: vertical;
+  padding: 12px 13px;
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  outline: none;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.reply-textarea::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.72;
+}
+
+.reply-textarea:focus {
+  border-color: var(--accent);
+}
+
+.reply-textarea:focus-visible {
+  outline: 2px solid
+    color-mix(
+      in srgb,
+      var(--accent) 45%,
+      transparent
+    );
+  outline-offset: 2px;
+}
+
+.reply-textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.reply-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.reply-help {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.reply-send-button {
+  flex-shrink: 0;
+  padding: 8px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--bg-primary);
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.reply-send-button:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.reply-send-button:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 3px;
+}
+
+.reply-send-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+@media (max-width: 480px) {
+  .listening-history-section,
+  .reply-box {
+    padding: 15px;
+  }
+
+  .history-message {
+    width: 94%;
+  }
+
+  .reply-actions {
+    align-items: flex-end;
+  }
+
+  .reply-help {
+    max-width: 190px;
+    line-height: 1.5;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .listening-history {
+    scroll-behavior: auto;
+  }
+
+  .feedback-button,
+  .reply-send-button {
+    transition: none;
+  }
+}
