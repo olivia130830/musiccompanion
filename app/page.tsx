@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useMemo,
   useState,
   type CSSProperties,
@@ -8,10 +9,20 @@ import {
 
 import AudioUploader from "@/components/AudioUploader";
 import CurrentComment from "@/components/CurrentComment";
+import ListeningHistory from "@/components/ListeningHistory";
 import MusicPlayer from "@/components/MusicPlayer";
+import UserReplyBox from "@/components/UserReplyBox";
+
 import { demoComments } from "@/data/demoComments";
+
 import { useCommentScheduler } from "@/hooks/useCommentScheduler";
-import type { PlaybackSnapshot } from "@/types/music";
+
+import type {
+  CommentFeedback,
+  DemoComment,
+  ListeningMessage,
+  PlaybackSnapshot,
+} from "@/types/music";
 
 const INITIAL_PLAYBACK: PlaybackSnapshot = {
   currentTime: 0,
@@ -19,6 +30,25 @@ const INITIAL_PLAYBACK: PlaybackSnapshot = {
   isPlaying: false,
   isSeeking: false,
 };
+
+/**
+ * 生成当前会话中的消息ID。
+ */
+function createMessageId(): string {
+  if (
+    typeof crypto !== "undefined" &&
+    "randomUUID" in crypto
+  ) {
+    return crypto.randomUUID();
+  }
+
+  return [
+    Date.now(),
+    Math.random()
+      .toString(36)
+      .slice(2),
+  ].join("-");
+}
 
 export default function Home() {
   const [audioFile, setAudioFile] =
@@ -29,9 +59,20 @@ export default function Home() {
       INITIAL_PLAYBACK,
     );
 
+  const [
+    listeningMessages,
+    setListeningMessages,
+  ] = useState<ListeningMessage[]>([]);
+
+  const [
+    feedbackByCommentId,
+    setFeedbackByCommentId,
+  ] = useState<
+    Record<string, CommentFeedback>
+  >({});
+
   /**
-   * 每个音频文件都有自己的唯一标识。
-   * 同名文件也可以通过大小和修改时间区分。
+   * 使用文件名称、大小和修改时间区分歌曲。
    */
   const trackKey = useMemo(() => {
     if (!audioFile) {
@@ -45,6 +86,44 @@ export default function Home() {
     ].join("-");
   }, [audioFile]);
 
+  /**
+   * 评论第一次触发时加入共同聆听记录。
+   */
+  const handleCommentTriggered =
+    useCallback((comment: DemoComment) => {
+      setListeningMessages(
+        (previousMessages) => {
+          const alreadyExists =
+            previousMessages.some(
+              (message) =>
+                message.sender ===
+                  "companion" &&
+                message.commentId ===
+                  comment.id,
+            );
+
+          if (alreadyExists) {
+            return previousMessages;
+          }
+
+          const newMessage: ListeningMessage =
+            {
+              id: `companion-${comment.id}`,
+              sender: "companion",
+              text: comment.comment,
+              musicTimeSeconds:
+                comment.timeSeconds,
+              commentId: comment.id,
+            };
+
+          return [
+            ...previousMessages,
+            newMessage,
+          ];
+        },
+      );
+    }, []);
+
   const { currentComment } =
     useCommentScheduler({
       comments: demoComments,
@@ -52,11 +131,57 @@ export default function Home() {
       isPlaying: playback.isPlaying,
       isSeeking: playback.isSeeking,
       trackKey,
+      onCommentTriggered:
+        handleCommentTriggered,
     });
 
+  /**
+   * 选择新音乐时清空上一首歌的会话。
+   */
   const handleFileSelect = (file: File) => {
     setAudioFile(file);
     setPlayback(INITIAL_PLAYBACK);
+    setListeningMessages([]);
+    setFeedbackByCommentId({});
+  };
+
+  const handleFeedbackChange = (
+    commentId: string,
+    feedback: CommentFeedback,
+  ) => {
+    setFeedbackByCommentId(
+      (previousFeedback) => ({
+        ...previousFeedback,
+        [commentId]: feedback,
+      }),
+    );
+  };
+
+  const handleUserSend = (text: string) => {
+    if (!audioFile) {
+      return;
+    }
+
+    const cleanText = text.trim();
+
+    if (!cleanText) {
+      return;
+    }
+
+    const newMessage: ListeningMessage = {
+      id: createMessageId(),
+      sender: "user",
+      text: cleanText,
+      musicTimeSeconds:
+        playback.currentTime,
+    };
+
+    setListeningMessages(
+      (previousMessages) => [
+        ...previousMessages,
+        newMessage,
+      ],
+    );
   };
 
   return (
@@ -84,13 +209,27 @@ export default function Home() {
 
         <MusicPlayer
           audioFile={audioFile}
-          onPlaybackStateChange={setPlayback}
+          onPlaybackStateChange={
+            setPlayback
+          }
         />
 
         <CurrentComment
-          key={currentComment?.id ?? trackKey}
+          key={`current-comment-${currentComment?.id ?? trackKey}`}
           comment={currentComment}
           hasAudio={Boolean(audioFile)}
+        />
+
+        <ListeningHistory
+          messages={listeningMessages}
+          feedbackByCommentId={feedbackByCommentId}
+          onFeedbackChange={handleFeedbackChange}
+        />
+
+        <UserReplyBox
+          key={trackKey}
+          disabled={!audioFile}
+          onSend={handleUserSend}
         />
       </section>
     </main>
@@ -101,16 +240,16 @@ const styles: Record<string, CSSProperties> = {
   main: {
     minHeight: "100vh",
     display: "flex",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "center",
-    padding: "32px 20px",
+    padding: "48px 20px 80px",
     backgroundColor: "var(--bg-primary)",
     color: "var(--text-primary)",
   },
 
   container: {
     width: "100%",
-    maxWidth: "520px",
+    maxWidth: "560px",
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
