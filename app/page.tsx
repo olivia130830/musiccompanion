@@ -14,7 +14,6 @@ import MusicPlayer from "@/components/MusicPlayer";
 import UserReplyBox from "@/components/UserReplyBox";
 
 import { demoComments } from "@/data/demoComments";
-
 import { useCommentScheduler } from "@/hooks/useCommentScheduler";
 
 import type {
@@ -31,9 +30,6 @@ const INITIAL_PLAYBACK: PlaybackSnapshot = {
   isSeeking: false,
 };
 
-/**
- * 生成当前会话中的消息ID。
- */
 function createMessageId(): string {
   if (
     typeof crypto !== "undefined" &&
@@ -42,12 +38,9 @@ function createMessageId(): string {
     return crypto.randomUUID();
   }
 
-  return [
-    Date.now(),
-    Math.random()
-      .toString(36)
-      .slice(2),
-  ].join("-");
+  return `${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2)}`;
 }
 
 export default function Home() {
@@ -71,9 +64,6 @@ export default function Home() {
     Record<string, CommentFeedback>
   >({});
 
-  /**
-   * 使用文件名称、大小和修改时间区分歌曲。
-   */
   const trackKey = useMemo(() => {
     if (!audioFile) {
       return "no-track";
@@ -86,9 +76,6 @@ export default function Home() {
     ].join("-");
   }, [audioFile]);
 
-  /**
-   * 评论第一次触发时加入共同聆听记录。
-   */
   const handleCommentTriggered =
     useCallback((comment: DemoComment) => {
       setListeningMessages(
@@ -135,9 +122,6 @@ export default function Home() {
         handleCommentTriggered,
     });
 
-  /**
-   * 选择新音乐时清空上一首歌的会话。
-   */
   const handleFileSelect = (file: File) => {
     setAudioFile(file);
     setPlayback(INITIAL_PLAYBACK);
@@ -185,9 +169,28 @@ export default function Home() {
   };
 
   return (
-    <main style={styles.main}>
+    <main className="app-shell">
+      <div
+        className="background-orb background-orb-blue"
+        aria-hidden="true"
+      />
+
+      <div
+        className="background-orb background-orb-purple"
+        aria-hidden="true"
+      />
+
       <section style={styles.container}>
         <header style={styles.header}>
+          <div style={styles.brandBadge}>
+            <span
+              style={styles.brandDot}
+              aria-hidden="true"
+            />
+
+            MusicCompanion
+          </div>
+
           <h1 style={styles.title}>
             有人和你一起听
           </h1>
@@ -197,15 +200,17 @@ export default function Home() {
           </p>
         </header>
 
-        <p style={styles.description}>
-          {!audioFile
-            ? "选择一首音乐，开始一次共同聆听。"
-            : "先听一会儿，它会在合适的时候说话。"}
-        </p>
+        <section style={styles.heroCard}>
+          <p style={styles.description}>
+            {!audioFile
+              ? "选择一首音乐，开始一次共同聆听。"
+              : "正在共同聆听，它会在合适的时候分享感受。"}
+          </p>
 
-        <AudioUploader
-          onFileSelect={handleFileSelect}
-        />
+          <AudioUploader
+            onFileSelect={handleFileSelect}
+          />
+        </section>
 
         <MusicPlayer
           audioFile={audioFile}
@@ -215,62 +220,117 @@ export default function Home() {
         />
 
         <CurrentComment
-          key={`current-comment-${currentComment?.id ?? trackKey}`}
+          key={`current-comment-${
+            currentComment?.id ?? trackKey
+          }`}
           comment={currentComment}
           hasAudio={Boolean(audioFile)}
         />
 
         <ListeningHistory
           messages={listeningMessages}
-          feedbackByCommentId={feedbackByCommentId}
-          onFeedbackChange={handleFeedbackChange}
+          feedbackByCommentId={
+            feedbackByCommentId
+          }
+          onFeedbackChange={
+            handleFeedbackChange
+          }
         />
 
         <UserReplyBox
-          key={trackKey}
+          key={`reply-box-${trackKey}`}
           disabled={!audioFile}
           onSend={handleUserSend}
         />
+
+        <footer style={styles.footer}>
+          音频只在你的浏览器中播放，不会上传。
+        </footer>
       </section>
     </main>
   );
 }
 
 const styles: Record<string, CSSProperties> = {
-  main: {
-    minHeight: "100vh",
-    display: "flex",
-    alignItems: "flex-start",
-    justifyContent: "center",
-    padding: "48px 20px 80px",
-    backgroundColor: "var(--bg-primary)",
-    color: "var(--text-primary)",
-  },
-
   container: {
+    position: "relative",
+    zIndex: 1,
     width: "100%",
-    maxWidth: "560px",
+    maxWidth: "640px",
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
-    gap: "28px",
+    gap: "24px",
   },
 
   header: {
+    width: "100%",
+    padding: "20px 10px 8px",
     textAlign: "center",
   },
 
-  title: {
-    margin: "0 0 8px",
-    fontSize: "30px",
+  brandBadge: {
+    width: "fit-content",
+    margin: "0 auto 22px",
+    padding: "7px 13px",
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    border: "1px solid rgba(113, 137, 180, 0.18)",
+    borderRadius: "999px",
+    background:
+      "rgba(255, 255, 255, 0.68)",
+    boxShadow:
+      "0 8px 28px rgba(54, 89, 142, 0.08)",
+    backdropFilter: "blur(16px)",
+    color: "var(--text-secondary)",
+    fontSize: "12px",
     fontWeight: 650,
-    letterSpacing: "-0.02em",
+    letterSpacing: "0.04em",
+  },
+
+  brandDot: {
+    width: "8px",
+    height: "8px",
+    borderRadius: "50%",
+    background:
+      "linear-gradient(135deg, #5d8cff, #a47aff)",
+    boxShadow:
+      "0 0 14px rgba(93, 140, 255, 0.65)",
+  },
+
+  title: {
+    margin: "0 0 12px",
+    color: "var(--text-primary)",
+    fontSize: "clamp(34px, 7vw, 52px)",
+    fontWeight: 670,
+    lineHeight: 1.12,
+    letterSpacing: "-0.045em",
   },
 
   subtitle: {
     margin: 0,
     color: "var(--text-secondary)",
-    fontSize: "14px",
+    fontSize: "15px",
+    lineHeight: 1.7,
+  },
+
+  heroCard: {
+    width: "100%",
+    maxWidth: "520px",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "18px",
+    padding: "22px",
+    border:
+      "1px solid rgba(116, 139, 181, 0.16)",
+    borderRadius: "24px",
+    background:
+      "rgba(255, 255, 255, 0.64)",
+    boxShadow:
+      "0 18px 60px rgba(74, 107, 163, 0.1)",
+    backdropFilter: "blur(22px)",
   },
 
   description: {
@@ -278,6 +338,14 @@ const styles: Record<string, CSSProperties> = {
     margin: 0,
     color: "var(--text-secondary)",
     fontSize: "14px",
+    lineHeight: 1.7,
+    textAlign: "center",
+  },
+
+  footer: {
+    padding: "8px 0 18px",
+    color: "var(--text-tertiary)",
+    fontSize: "11px",
     textAlign: "center",
   },
 };

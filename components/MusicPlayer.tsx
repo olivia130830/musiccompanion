@@ -5,7 +5,6 @@ import {
   useRef,
   useState,
   type ChangeEvent,
-  type CSSProperties,
 } from "react";
 
 import type { PlaybackSnapshot } from "@/types/music";
@@ -15,8 +14,8 @@ interface MusicPlayerProps {
   audioFile: File | null;
 
   /**
-   * 每当播放器状态发生变化时，
-   * 把状态传给父页面。
+   * 把播放器当前状态传给父组件，
+   * 供时间点评论系统使用。
    */
   onPlaybackStateChange?: (
     snapshot: PlaybackSnapshot,
@@ -41,14 +40,16 @@ export default function MusicPlayer({
   audioFile,
   onPlaybackStateChange,
 }: MusicPlayerProps) {
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioRef =
+    useRef<HTMLAudioElement | null>(null);
+
   const objectUrlRef = useRef("");
 
   const [state, setState] =
     useState<AudioState>(INITIAL_STATE);
 
   /**
-   * 把播放器状态传给父组件。
+   * 把播放状态通知父组件。
    */
   useEffect(() => {
     onPlaybackStateChange?.({
@@ -67,7 +68,7 @@ export default function MusicPlayer({
 
   /**
    * 当用户选择或更换音乐时，
-   * 创建新的本地Object URL。
+   * 创建新的本地播放地址。
    */
   useEffect(() => {
     const audio = audioRef.current;
@@ -77,17 +78,17 @@ export default function MusicPlayer({
     }
 
     /**
-     * 停止旧音乐。
+     * 先停止并清理上一首音乐。
      */
     audio.pause();
     audio.removeAttribute("src");
     audio.load();
 
-    /**
-     * 释放旧Object URL。
-     */
     if (objectUrlRef.current) {
-      URL.revokeObjectURL(objectUrlRef.current);
+      URL.revokeObjectURL(
+        objectUrlRef.current,
+      );
+
       objectUrlRef.current = "";
     }
 
@@ -97,17 +98,25 @@ export default function MusicPlayer({
       return;
     }
 
-    const objectUrl = URL.createObjectURL(audioFile);
+    const objectUrl =
+      URL.createObjectURL(audioFile);
 
     objectUrlRef.current = objectUrl;
+
     audio.src = objectUrl;
     audio.load();
 
+    /**
+     * 文件变化或组件卸载时释放资源。
+     */
     return () => {
       audio.pause();
 
       if (objectUrlRef.current) {
-        URL.revokeObjectURL(objectUrlRef.current);
+        URL.revokeObjectURL(
+          objectUrlRef.current,
+        );
+
         objectUrlRef.current = "";
       }
     };
@@ -133,7 +142,9 @@ export default function MusicPlayer({
     const handleLoadedMetadata = () => {
       setState((previous) => ({
         ...previous,
-        duration: Number.isFinite(audio.duration)
+        duration: Number.isFinite(
+          audio.duration,
+        )
           ? audio.duration
           : 0,
         isLoading: false,
@@ -143,7 +154,9 @@ export default function MusicPlayer({
     const handleDurationChange = () => {
       setState((previous) => ({
         ...previous,
-        duration: Number.isFinite(audio.duration)
+        duration: Number.isFinite(
+          audio.duration,
+        )
           ? audio.duration
           : 0,
       }));
@@ -169,7 +182,8 @@ export default function MusicPlayer({
         ...previous,
         isPlaying: false,
         currentTime:
-          audio.duration || previous.currentTime,
+          audio.duration ||
+          previous.currentTime,
       }));
     };
 
@@ -225,12 +239,36 @@ export default function MusicPlayer({
       handleDurationChange,
     );
 
-    audio.addEventListener("play", handlePlay);
-    audio.addEventListener("pause", handlePause);
-    audio.addEventListener("ended", handleEnded);
-    audio.addEventListener("seeking", handleSeeking);
-    audio.addEventListener("seeked", handleSeeked);
-    audio.addEventListener("error", handleError);
+    audio.addEventListener(
+      "play",
+      handlePlay,
+    );
+
+    audio.addEventListener(
+      "pause",
+      handlePause,
+    );
+
+    audio.addEventListener(
+      "ended",
+      handleEnded,
+    );
+
+    audio.addEventListener(
+      "seeking",
+      handleSeeking,
+    );
+
+    audio.addEventListener(
+      "seeked",
+      handleSeeked,
+    );
+
+    audio.addEventListener(
+      "error",
+      handleError,
+    );
+
     audio.addEventListener(
       "loadstart",
       handleLoadStart,
@@ -252,7 +290,11 @@ export default function MusicPlayer({
         handleDurationChange,
       );
 
-      audio.removeEventListener("play", handlePlay);
+      audio.removeEventListener(
+        "play",
+        handlePlay,
+      );
+
       audio.removeEventListener(
         "pause",
         handlePause,
@@ -286,12 +328,16 @@ export default function MusicPlayer({
   }, []);
 
   /**
-   * 播放或暂停。
+   * 播放或暂停音乐。
    */
   const handlePlayPause = async () => {
     const audio = audioRef.current;
 
-    if (!audio || !audioFile || state.isLoading) {
+    if (
+      !audio ||
+      !audioFile ||
+      state.isLoading
+    ) {
       return;
     }
 
@@ -305,13 +351,14 @@ export default function MusicPlayer({
       setState((previous) => ({
         ...previous,
         isPlaying: false,
-        error: "播放失败，请检查文件。",
+        error:
+          "播放失败，请检查音频文件。",
       }));
     }
   };
 
   /**
-   * 用户拖动进度条。
+   * 用户拖动播放进度条。
    */
   const handleProgressChange = (
     event: ChangeEvent<HTMLInputElement>,
@@ -338,7 +385,9 @@ export default function MusicPlayer({
     }));
   };
 
-  const duration = Number.isFinite(state.duration)
+  const duration = Number.isFinite(
+    state.duration,
+  )
     ? state.duration
     : 0;
 
@@ -356,33 +405,31 @@ export default function MusicPlayer({
 
   return (
     <section
-      style={styles.container}
+      className="music-player-card"
       aria-label="音乐播放器"
     >
-      <audio ref={audioRef} preload="metadata" />
+      <audio
+        ref={audioRef}
+        preload="metadata"
+      />
 
       {audioFile && (
-        <p style={styles.fileName}>
+        <p className="music-file-name">
           {audioFile.name}
         </p>
       )}
 
       <button
         type="button"
+        className="music-play-button"
         onClick={handlePlayPause}
         disabled={isDisabled}
-        style={{
-          ...styles.button,
-          ...(isDisabled
-            ? styles.buttonDisabled
-            : {}),
-        }}
       >
         {state.isLoading
           ? "正在读取…"
           : state.isPlaying
-            ? "⏸ 暂停"
-            : "▶ 播放"}
+            ? "暂停"
+            : "播放"}
       </button>
 
       {audioFile && (
@@ -394,14 +441,17 @@ export default function MusicPlayer({
             max={duration}
             step={0.01}
             value={
-              duration > 0 ? currentTime : 0
+              duration > 0
+                ? currentTime
+                : 0
             }
-            onChange={handleProgressChange}
+            onChange={
+              handleProgressChange
+            }
             disabled={duration <= 0}
-            style={styles.progressBar}
           />
 
-          <p style={styles.timeDisplay}>
+          <p className="music-time-display">
             {formatTime(currentTime)} /{" "}
             {formatTime(duration)}
           </p>
@@ -409,67 +459,13 @@ export default function MusicPlayer({
       )}
 
       {state.error && (
-        <p role="alert" style={styles.error}>
+        <p
+          role="alert"
+          className="music-error"
+        >
           {state.error}
         </p>
       )}
     </section>
   );
 }
-
-const styles: Record<string, CSSProperties> = {
-  container: {
-    width: "100%",
-    maxWidth: "420px",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "stretch",
-    gap: "14px",
-    padding: "20px",
-    border: "1px solid var(--border-light)",
-    borderRadius: "16px",
-    backgroundColor: "var(--bg-secondary)",
-  },
-
-  fileName: {
-    margin: 0,
-    color: "var(--text-secondary)",
-    fontSize: "13px",
-    textAlign: "center",
-    overflowWrap: "anywhere",
-  },
-
-  button: {
-    alignSelf: "center",
-    minWidth: "110px",
-    padding: "10px 18px",
-    borderRadius: "999px",
-    backgroundColor: "var(--accent)",
-    color: "var(--bg-primary)",
-    fontSize: "14px",
-    fontWeight: 650,
-  },
-
-  buttonDisabled: {
-    cursor: "not-allowed",
-    opacity: 0.5,
-  },
-
-  timeDisplay: {
-    margin: 0,
-    color: "var(--text-secondary)",
-    fontSize: "12px",
-    textAlign: "center",
-  },
-
-  progressBar: {
-    width: "100%",
-  },
-
-  error: {
-    margin: 0,
-    color: "#ff8a8a",
-    fontSize: "12px",
-    textAlign: "center",
-  },
-};
