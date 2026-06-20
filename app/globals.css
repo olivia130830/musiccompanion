@@ -1077,3 +1077,18 @@ input[type="range"]:focus-visible {
       0.01ms !important;
   }
 }
+@keyframes analysis-spinner {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .analysis-spinner {
+    animation: none;
+  }
+}
