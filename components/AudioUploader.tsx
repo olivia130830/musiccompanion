@@ -8,6 +8,7 @@ import {
 
 interface AudioUploaderProps {
   onFileSelect: (file: File) => void;
+  disabled?: boolean;
 }
 
 const ACCEPTED_EXTENSIONS = [
@@ -18,23 +19,31 @@ const ACCEPTED_EXTENSIONS = [
 
 const ACCEPTED_MIMES = [
   "audio/mpeg",
+  "audio/mp3",
   "audio/wav",
   "audio/x-wav",
   "audio/mp4",
   "audio/x-m4a",
 ];
 
+const MAX_FILE_SIZE_BYTES =
+  100 * 1024 * 1024;
+
 export default function AudioUploader({
   onFileSelect,
+  disabled = false,
 }: AudioUploaderProps) {
   const fileInputRef =
-    useRef<HTMLInputElement | null>(null);
+    useRef<HTMLInputElement | null>(
+      null,
+    );
 
-  const [error, setError] = useState("");
+  const [error, setError] =
+    useState("");
 
   const validateFile = (
     file: File,
-  ): boolean => {
+  ): string | null => {
     const extension =
       file.name
         .split(".")
@@ -46,17 +55,30 @@ export default function AudioUploader({
         extension,
       )
     ) {
-      return false;
+      return "请选择MP3、WAV或M4A音频文件。";
     }
 
     if (
       file.type !== "" &&
-      !ACCEPTED_MIMES.includes(file.type)
+      !ACCEPTED_MIMES.includes(
+        file.type,
+      )
     ) {
-      return false;
+      return "这个音频文件的格式不受支持。";
     }
 
-    return true;
+    if (
+      file.size >
+      MAX_FILE_SIZE_BYTES
+    ) {
+      return "音频文件不能超过100MB。";
+    }
+
+    if (file.size === 0) {
+      return "这个音频文件是空的。";
+    }
+
+    return null;
   };
 
   const handleFileChange = (
@@ -71,10 +93,11 @@ export default function AudioUploader({
       return;
     }
 
-    if (!validateFile(file)) {
-      setError(
-        "请选择 MP3、WAV 或 M4A 音频文件。",
-      );
+    const validationError =
+      validateFile(file);
+
+    if (validationError) {
+      setError(validationError);
       return;
     }
 
@@ -82,7 +105,12 @@ export default function AudioUploader({
   };
 
   const handleClick = () => {
-    const input = fileInputRef.current;
+    if (disabled) {
+      return;
+    }
+
+    const input =
+      fileInputRef.current;
 
     if (!input) {
       return;
@@ -97,16 +125,20 @@ export default function AudioUploader({
       <input
         ref={fileInputRef}
         type="file"
-        accept="audio/mpeg,audio/wav,audio/x-wav,audio/mp4,audio/x-m4a,.mp3,.wav,.m4a"
+        disabled={disabled}
+        accept="audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/mp4,audio/x-m4a,.mp3,.wav,.m4a"
         onChange={handleFileChange}
       />
 
       <button
         type="button"
         className="upload-button"
+        disabled={disabled}
         onClick={handleClick}
       >
-        选择音乐
+        {disabled
+          ? "正在分析…"
+          : "选择音乐"}
       </button>
 
       {error && (
