@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "dev:proxy": "HTTP_PROXY=http://127.0.0.1:65532 HTTPS_PROXY=http://127.0.0.1:65532 NO_PROXY=localhost,127.0.0.1 node --use-env-proxy ./node_modules/next/dist/bin/next dev",
+    "dev": "HTTP_PROXY=http://127.0.0.1:65532 HTTPS_PROXY=http://127.0.0.1:65532 NO_PROXY=localhost,127.0.0.1 node --use-env-proxy ./node_modules/next/dist/bin/next dev",
+    "dev:direct": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
