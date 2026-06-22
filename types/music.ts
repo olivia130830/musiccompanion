@@ -9,6 +9,19 @@ export type EventType =
   | "theme_return";
 
 /**
+ * 阶段9：共同聆听时，用户表达出的偏好或情绪方向。
+ *
+ * 这不是医学或心理判断，只是用于调整AI评论语气。
+ */
+export type CompanionTone =
+  | "unknown"
+  | "quiet"
+  | "excited"
+  | "sad"
+  | "warm"
+  | "curious";
+
+/**
  * 一条带时间点的音乐评论。
  *
  * 这个类型既可以表示原来的人工演示评论，

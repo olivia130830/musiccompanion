@@ -30,6 +30,7 @@ import type {
   AudioAnalysisResult,
   AudioAnalysisStatus,
   CommentFeedback,
+  CompanionTone,
   DemoComment,
   ListeningMessage,
   PlaybackSnapshot,
@@ -42,6 +43,15 @@ const INITIAL_PLAYBACK: PlaybackSnapshot =
     isPlaying: false,
     isSeeking: false,
   };
+
+const STAGE9_WARMUP_COMMENT_ID =
+  "stage9-warmup";
+
+const STAGE9_ANALYSIS_READY_COMMENT_ID =
+  "stage9-analysis-ready";
+
+const STAGE9_FALLBACK_COMMENT_ID =
+  "stage9-fallback";
 
 function createMessageId(): string {
   if (
@@ -122,6 +132,215 @@ async function readErrorMessage(
   return `请求失败（HTTP ${response.status}）。`;
 }
 
+function inferCompanionTone(
+  text: string,
+): CompanionTone {
+  const normalized =
+    text
+      .trim()
+      .toLowerCase();
+
+  if (!normalized) {
+    return "unknown";
+  }
+
+  const quietWords = [
+    "安静",
+    "轻",
+    "慢",
+    "柔",
+    "平静",
+    "舒服",
+    "淡",
+    "空",
+    "松",
+    "静",
+  ];
+
+  const excitedWords = [
+    "燃",
+    "炸",
+    "爽",
+    "激动",
+    "热血",
+    "强",
+    "冲",
+    "快",
+    "有劲",
+    "震撼",
+  ];
+
+  const sadWords = [
+    "孤独",
+    "难过",
+    "悲伤",
+    "伤感",
+    "压抑",
+    "emo",
+    "失落",
+    "沉重",
+    "想哭",
+  ];
+
+  const warmWords = [
+    "温暖",
+    "治愈",
+    "可爱",
+    "甜",
+    "亲切",
+    "安心",
+    "柔和",
+    "浪漫",
+  ];
+
+  const curiousWords = [
+    "为什么",
+    "咋",
+    "怎么",
+    "感觉",
+    "好像",
+    "是不是",
+    "哪里",
+    "?",
+    "？",
+  ];
+
+  if (
+    sadWords.some((word) =>
+      normalized.includes(word),
+    )
+  ) {
+    return "sad";
+  }
+
+  if (
+    excitedWords.some((word) =>
+      normalized.includes(word),
+    )
+  ) {
+    return "excited";
+  }
+
+  if (
+    warmWords.some((word) =>
+      normalized.includes(word),
+    )
+  ) {
+    return "warm";
+  }
+
+  if (
+    quietWords.some((word) =>
+      normalized.includes(word),
+    )
+  ) {
+    return "quiet";
+  }
+
+  if (
+    curiousWords.some((word) =>
+      normalized.includes(word),
+    )
+  ) {
+    return "curious";
+  }
+
+  return "unknown";
+}
+
+function adaptCommentToTone(
+  comment: DemoComment,
+  tone: CompanionTone,
+): DemoComment {
+  if (tone === "unknown") {
+    return comment;
+  }
+
+  const original =
+    comment.comment.trim();
+
+  if (!original) {
+    return comment;
+  }
+
+  const tonePrefix: Record<
+    Exclude<
+      CompanionTone,
+      "unknown"
+    >,
+    string
+  > = {
+    quiet: "我也觉得这里可以轻轻听，",
+    excited: "这一下确实有点起来了，",
+    sad: "这里听起来有点往心里沉，",
+    warm: "这段有种慢慢靠近的感觉，",
+    curious: "我也注意到这里了，",
+  };
+
+  const prefix =
+    tonePrefix[tone];
+
+  const shortened =
+    original
+      .replace(/^我觉得/, "")
+      .replace(/^这里/, "")
+      .replace(/^这段/, "")
+      .trim();
+
+  const nextComment =
+    `${prefix}${shortened}`;
+
+  return {
+    ...comment,
+    comment:
+      nextComment.length > 42
+        ? nextComment.slice(0, 42)
+        : nextComment,
+  };
+}
+
+function createStage9FallbackComments(): DemoComment[] {
+  return [
+    {
+      id: "stage9-fallback-12",
+      timeSeconds: 12,
+      eventType: "intro",
+      comment:
+        "我先不分析太多，陪你听进去。",
+    },
+    {
+      id: "stage9-fallback-30",
+      timeSeconds: 30,
+      eventType:
+        "emotion_shift",
+      comment:
+        "这里的感觉好像慢慢展开了。",
+    },
+    {
+      id: "stage9-fallback-52",
+      timeSeconds: 52,
+      eventType:
+        "theme_return",
+      comment:
+        "这一段可以先顺着它的情绪走。",
+    },
+  ];
+}
+
+function createCompanionMessage(
+  text: string,
+  musicTimeSeconds: number,
+  commentId: string,
+): ListeningMessage {
+  return {
+    id: createMessageId(),
+    sender: "companion",
+    text,
+    musicTimeSeconds,
+    commentId,
+  };
+}
+
 export default function Home() {
   const [
     audioFile,
@@ -162,6 +381,14 @@ export default function Home() {
   ] = useState<
     DemoComment[]
   >([]);
+
+  const [
+    companionTone,
+    setCompanionTone,
+  ] =
+    useState<CompanionTone>(
+      "unknown",
+    );
 
   const [
     analysisStatus,
@@ -212,6 +439,57 @@ export default function Home() {
 
   const hasAudio =
     Boolean(audioFile);
+
+  const companionComments =
+    useMemo(() => {
+      return activeComments.map(
+        (comment) =>
+          adaptCommentToTone(
+            comment,
+            companionTone,
+          ),
+      );
+    }, [
+      activeComments,
+      companionTone,
+    ]);
+
+  const addCompanionMessage =
+    useCallback(
+      (
+        text: string,
+        commentId: string,
+      ) => {
+        setListeningMessages(
+          (
+            previousMessages,
+          ) => {
+            const alreadyExists =
+              previousMessages.some(
+                (message) =>
+                  message.sender ===
+                    "companion" &&
+                  message.commentId ===
+                    commentId,
+              );
+
+            if (alreadyExists) {
+              return previousMessages;
+            }
+
+            return [
+              ...previousMessages,
+              createCompanionMessage(
+                text,
+                playback.currentTime,
+                commentId,
+              ),
+            ];
+          },
+        );
+      },
+      [playback.currentTime],
+    );
 
   const handleCommentTriggered =
     useCallback(
@@ -265,7 +543,7 @@ export default function Home() {
   const { currentComment } =
     useCommentScheduler({
       comments:
-        activeComments,
+        companionComments,
 
       currentTime:
         playback.currentTime,
@@ -298,6 +576,9 @@ export default function Home() {
       );
 
       setActiveComments([]);
+      setCompanionTone(
+        "unknown",
+      );
       setAnalysisSummary("");
       setAnalysisError("");
 
@@ -431,24 +712,50 @@ export default function Home() {
           setAnalysisStatus(
             "success",
           );
+
+          addCompanionMessage(
+            "我差不多跟上这首歌了，后面我会少说一点，只在有感觉的时候冒出来。",
+            STAGE9_ANALYSIS_READY_COMMENT_ID,
+          );
         } catch (error) {
           console.error(
             "音频分析失败：",
             error,
           );
 
+          const message =
+            error instanceof Error
+              ? error.message
+              : "音频分析失败，请稍后重试。";
+
           setAnalysisStatus(
             "error",
           );
 
           setAnalysisError(
-            error instanceof Error
-              ? error.message
-              : "音频分析失败，请稍后重试。",
+            message,
+          );
+
+          setAnalysisSummary(
+            "AI暂时没能完成完整分析，但音乐可以继续播放。",
+          );
+
+          setActiveComments(
+            createStage9FallbackComments(),
+          );
+
+          setListeningSessionId(
+            (previous) =>
+              previous + 1,
+          );
+
+          addCompanionMessage(
+            "我这边暂时没法完整分析，但不影响我们先听，我会用轻一点的方式陪你。",
+            STAGE9_FALLBACK_COMMENT_ID,
           );
         }
       },
-      [],
+      [addCompanionMessage],
     );
 
   const handleFileSelect = (
@@ -457,6 +764,14 @@ export default function Home() {
     setAudioFile(file);
 
     resetListeningSession();
+
+    setListeningMessages([
+      createCompanionMessage(
+        "你先播放就行，我会边跟着听，慢慢抓这首歌的感觉。",
+        0,
+        STAGE9_WARMUP_COMMENT_ID,
+      ),
+    ]);
 
     /**
      * 用户立即获得播放器，
@@ -473,6 +788,11 @@ export default function Home() {
     setAnalysisError("");
     setAnalysisSummary("");
     setActiveComments([]);
+
+    addCompanionMessage(
+      "我再试一次跟上这首歌，你不用停下来等我。",
+      `${STAGE9_FALLBACK_COMMENT_ID}-retry-${Date.now()}`,
+    );
 
     void analyzeFile(
       audioFile,
@@ -496,6 +816,11 @@ export default function Home() {
 
       setAnalysisStatus(
         "fallback",
+      );
+
+      addCompanionMessage(
+        "那我先用演示评论陪你听，主要测试共同聆听的感觉。",
+        `${STAGE9_FALLBACK_COMMENT_ID}-demo`,
       );
     };
 
@@ -553,6 +878,54 @@ export default function Home() {
         newMessage,
       ],
     );
+
+    const inferredTone =
+      inferCompanionTone(
+        cleanText,
+      );
+
+    if (
+      inferredTone !==
+      "unknown"
+    ) {
+      setCompanionTone(
+        inferredTone,
+      );
+
+      const toneResponse: Record<
+        Exclude<
+          CompanionTone,
+          "unknown"
+        >,
+        string
+      > = {
+        quiet:
+          "嗯，那我后面也轻一点说，别打断这首歌的气氛。",
+        excited:
+          "懂了，后面我会更注意那些突然冲起来的地方。",
+        sad:
+          "我懂，你这个感受挺重要的，后面我会顺着这种情绪听。",
+        warm:
+          "嗯，这首歌的温度我也会多留意一点。",
+        curious:
+          "可以，我后面会帮你一起盯着这种变化。",
+      };
+
+      setListeningMessages(
+        (
+          previousMessages,
+        ) => [
+          ...previousMessages,
+          createCompanionMessage(
+            toneResponse[
+              inferredTone
+            ],
+            playback.currentTime,
+            `stage9-tone-${Date.now()}`,
+          ),
+        ],
+      );
+    }
   };
 
   return (
@@ -622,16 +995,19 @@ export default function Home() {
             }
           >
             {!audioFile
-              ? "选择一首音乐，播放可以立即开始，AI会在后台准备评论。"
+              ? "选择一首音乐，播放可以立即开始。AI会像朋友一样慢慢跟上。"
               : isWorking
-                ? "你可以先听音乐，AI正在后台理解这首作品。"
+                ? "你不用等我，先听就好。我正在后台跟上这首歌。"
                 : analysisStatus ===
                     "success"
-                  ? "AI评论已经准备完成，共同聆听正在继续。"
+                  ? "我已经跟上了，后面只在有感觉的时候轻轻说两句。"
                   : analysisStatus ===
                       "error"
-                    ? "音乐仍可正常播放，AI分析可以稍后重试。"
-                    : "已经可以开始共同聆听。"}
+                    ? "分析暂时失败，但音乐不用停，我会用基础陪伴模式继续。"
+                    : analysisStatus ===
+                        "fallback"
+                      ? "现在使用基础陪伴模式，先把共同聆听的感觉跑起来。"
+                      : "已经可以开始共同聆听。"}
           </p>
 
           <AudioUploader
@@ -716,7 +1092,7 @@ export default function Home() {
         <footer
           style={styles.footer}
         >
-          选择音乐后可以立即播放；AI分析在后台进行，完成后自动加入后续时间点评论。
+          阶段9：先把预分析评论优化成共同聆听体验；真正实时聆听会在后续阶段继续推进。
         </footer>
       </section>
     </main>
