@@ -3,331 +3,348 @@ import {
   get,
 } from "@vercel/blob";
 
-import { NextResponse } from "next/server";
-
-import {
-  analyzeAudioWithGemini,
-} from "@/lib/gemini";
+import type {
+  AudioAnalysisResult,
+  DemoComment,
+  TrackIdentity,
+} from "@/types/music";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
 export const dynamic = "force-dynamic";
+export const maxDuration = 300;
 
-const MAX_AUDIO_SIZE_BYTES =
-  100 * 1024 * 1024;
-
-const ALLOWED_MIME_TYPES = new Set([
-  "audio/mpeg",
-  "audio/mp3",
-  "audio/wav",
-  "audio/x-wav",
-  "audio/mp4",
-  "audio/x-m4a",
-  "audio/aac",
-]);
-
-interface AnalyzeAudioRequest {
+interface AnalyzeAudioRequestBody {
   blobPathname?: unknown;
   fileName?: unknown;
   mimeType?: unknown;
 }
 
-function cleanFileName(
-  value: string,
-): string {
-  return (
-    value
-      .replace(
-        /[^\p{L}\p{N}._ -]/gu,
-        "",
-      )
-      .trim()
-      .slice(0, 120) || "audio"
-  );
-}
+interface AudDResponse {
+  status?: string;
 
-function isAllowedPathname(
-  value: string,
-): boolean {
-  return (
-    value.startsWith(
-      "music-analysis/",
-    ) &&
-    !value.includes("..")
-  );
-}
+  result?: {
+    artist?: string;
+    title?: string;
+    album?: string;
+    release_date?: string;
+    label?: string;
+    song_link?: string;
+    spotify?: {
+      external_urls?: {
+        spotify?: string;
+      };
+    };
+    apple_music?: {
+      url?: string;
+    };
+  } | null;
 
-function describeRouteError(
-  error: unknown,
-): string {
-  if (!(error instanceof Error)) {
-    return String(error);
-  }
-
-  const details = [error.message];
-
-  const errorWithCause = error as Error & {
-    cause?: unknown;
+  error?: {
+    error_message?: string;
+    error_code?: number;
   };
-
-  if (
-    errorWithCause.cause instanceof Error
-  ) {
-    details.push(
-      errorWithCause.cause.message,
-    );
-  }
-
-  return [...new Set(details)]
-    .filter(Boolean)
-    .join("；");
 }
 
-function createUserFacingError(
-  error: unknown,
-): string {
-  const details =
-    describeRouteError(error);
-
-  const lower =
-    details.toLowerCase();
-
-  if (
-    lower.includes("fetch failed") ||
-    lower.includes("econnreset") ||
-    lower.includes("etimedout") ||
-    lower.includes(
-      "connect timeout",
-    )
-  ) {
-    return [
-      "服务器连接Gemini失败。",
-      "音频已经成功上传和读取，",
-      "但当前Node.js进程无法稳定访问Gemini API。",
-      `详细原因：${details}`,
-    ].join("");
-  }
-
-  if (
-    lower.includes(
-      "permission_denied",
-    ) ||
-    lower.includes("403")
-  ) {
-    return [
-      "Gemini拒绝了当前API Key。",
-      "请检查Key权限、可用地区及项目配置。",
-      `详细原因：${details}`,
-    ].join("");
-  }
-
-  if (
-    lower.includes(
-      "failed_precondition",
-    )
-  ) {
-    return [
-      "当前地区或项目配置暂时无法使用Gemini API免费层。",
-      "请检查Google AI Studio中的项目状态。",
-      `详细原因：${details}`,
-    ].join("");
-  }
-
-  if (
-    lower.includes("429") ||
-    lower.includes(
-      "resource_exhausted",
-    )
-  ) {
-    return "Gemini请求次数达到限制，请稍后重新分析。";
-  }
-
-  return details;
-}
-
-export async function POST(
-  request: Request,
-): Promise<NextResponse> {
+function getRequiredBlobToken(): string {
   const token =
-    process.env
-      .BLOB_READ_WRITE_TOKEN
-      ?.trim();
+    process.env.BLOB_READ_WRITE_TOKEN?.trim();
 
   if (!token) {
-    return NextResponse.json(
-      {
-        error:
-          "服务器尚未配置BLOB_READ_WRITE_TOKEN。",
-      },
-      {
-        status: 500,
-      },
+    throw new Error(
+      "服务器没有读取到BLOB_READ_WRITE_TOKEN。请检查.env.local和Vercel环境变量。",
     );
   }
 
-  let body: AnalyzeAudioRequest;
+  return token;
+}
+
+function getString(value: unknown): string {
+  return typeof value === "string"
+    ? value.trim()
+    : "";
+}
+
+function getAudioMimeType(
+  fileName: string,
+  rawMimeType: string,
+): string {
+  if (rawMimeType) {
+    return rawMimeType;
+  }
+
+  const extension =
+    fileName
+      .split(".")
+      .pop()
+      ?.toLowerCase() ?? "";
+
+  if (extension === "wav") {
+    return "audio/wav";
+  }
+
+  if (extension === "m4a") {
+    return "audio/mp4";
+  }
+
+  if (extension === "aac") {
+    return "audio/aac";
+  }
+
+  return "audio/mpeg";
+}
+
+async function readStreamToArrayBuffer(
+  stream: ReadableStream<Uint8Array>,
+): Promise<ArrayBuffer> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalLength = 0;
+
+  while (true) {
+    const {
+      value,
+      done,
+    } = await reader.read();
+
+    if (done) {
+      break;
+    }
+
+    if (!value) {
+      continue;
+    }
+
+    chunks.push(value);
+    totalLength += value.length;
+  }
+
+  const merged = new Uint8Array(totalLength);
+  let offset = 0;
+
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  return merged.buffer.slice(0) as ArrayBuffer;
+}
+
+async function recognizeWithAudD({
+  audioBlob,
+  fileName,
+}: {
+  audioBlob: Blob;
+  fileName: string;
+}): Promise<TrackIdentity> {
+  const token =
+    process.env.AUDD_API_TOKEN?.trim();
+
+  if (!token) {
+    return {
+      title: null,
+      artist: null,
+      album: null,
+      source: "none",
+      confidenceText:
+        "未配置AUDD_API_TOKEN，所以没有进行歌名识别。",
+    };
+  }
+
+  const formData = new FormData();
+
+  formData.append("api_token", token);
+  formData.append("file", audioBlob, fileName);
+  formData.append("return", "apple_music,spotify");
+
+  const response = await fetch(
+    "https://api.audd.io/",
+    {
+      method: "POST",
+      body: formData,
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `AudD识别失败：HTTP ${response.status}`,
+    );
+  }
+
+  const data =
+    (await response.json()) as AudDResponse;
+
+  if (data.status !== "success") {
+    const message =
+      data.error?.error_message ||
+      "AudD没有返回成功状态。";
+
+    throw new Error(
+      `AudD识别失败：${message}`,
+    );
+  }
+
+  if (!data.result) {
+    return {
+      title: null,
+      artist: null,
+      album: null,
+      source: "none",
+      confidenceText:
+        "AudD没有识别出明确歌名。可能是音频片段太短、噪声较多、倒放、变调，或歌曲不在数据库中。",
+    };
+  }
+
+  return {
+    title: data.result.title ?? null,
+    artist: data.result.artist ?? null,
+    album: data.result.album ?? null,
+    source: "audd",
+    confidenceText:
+      "AudD返回了歌曲识别结果，适合表达为“识别结果”，不要说100%确定。",
+  };
+}
+
+function createCommentsFromIdentity(
+  identity: TrackIdentity,
+): DemoComment[] {
+  const firstComment =
+    identity.title || identity.artist
+      ? `识别结果像是 ${identity.title ?? "未知歌名"}${
+          identity.artist
+            ? ` - ${identity.artist}`
+            : ""
+        }。`
+      : "暂时没有识别出准确歌名。";
+
+  return [
+    {
+      id: "audd-identity-0",
+      timeSeconds: 3,
+      eventType: "intro",
+      comment: firstComment,
+    },
+    {
+      id: "audd-identity-1",
+      timeSeconds: 18,
+      eventType: "emotion_shift",
+      comment:
+        "歌名识别只是身份信息，具体听感还要结合本地音频特征。",
+    },
+    {
+      id: "audd-identity-2",
+      timeSeconds: 36,
+      eventType: "theme_return",
+      comment:
+        "如果识别不到歌名，可能是片段太短、倒放、变调或数据库未收录。",
+    },
+  ];
+}
+
+function buildSummary(
+  identity: TrackIdentity,
+): string {
+  const parts: string[] = [];
+
+  if (identity.title || identity.artist) {
+    parts.push(
+      `歌曲识别：${identity.title ?? "未知歌名"}${
+        identity.artist
+          ? ` - ${identity.artist}`
+          : ""
+      }。`,
+    );
+  } else {
+    parts.push(
+      "歌曲识别：暂时没有识别出准确歌名。",
+    );
+  }
+
+  if (identity.album) {
+    parts.push(`专辑：${identity.album}。`);
+  }
+
+  parts.push(`识别说明：${identity.confidenceText}`);
+
+  return parts.join("\n");
+}
+
+export async function POST(request: Request) {
+  const blobToken = getRequiredBlobToken();
+  let blobPathname = "";
 
   try {
-    body =
-      (await request.json()) as AnalyzeAudioRequest;
-  } catch {
-    return NextResponse.json(
-      {
-        error:
-          "音频分析请求格式无效。",
-      },
-      {
-        status: 400,
-      },
+    const body =
+      (await request.json()) as AnalyzeAudioRequestBody;
+
+    blobPathname = getString(body.blobPathname);
+
+    const fileName =
+      getString(body.fileName) || "audio.mp3";
+
+    const mimeType = getAudioMimeType(
+      fileName,
+      getString(body.mimeType),
     );
-  }
 
-  if (
-    typeof body.blobPathname !==
-      "string" ||
-    !isAllowedPathname(
-      body.blobPathname,
-    )
-  ) {
-    return NextResponse.json(
-      {
-        error:
-          "私有音频文件路径无效。",
-      },
-      {
-        status: 400,
-      },
-    );
-  }
-
-  if (
-    typeof body.mimeType !==
-      "string" ||
-    !ALLOWED_MIME_TYPES.has(
-      body.mimeType,
-    )
-  ) {
-    return NextResponse.json(
-      {
-        error:
-          "不支持这种音频格式。",
-      },
-      {
-        status: 400,
-      },
-    );
-  }
-
-  const blobPathname =
-    body.blobPathname;
-
-  const fileName =
-    typeof body.fileName ===
-    "string"
-      ? cleanFileName(
-          body.fileName,
-        )
-      : "audio";
-
-  try {
-    /**
-     * Private Blob必须在服务端使用认证读取。
-     */
-    const privateBlob =
-      await get(
-        blobPathname,
+    if (!blobPathname) {
+      return Response.json(
         {
-          access: "private",
-          token,
+          error: "缺少blobPathname。",
         },
-      );
-
-    if (
-      !privateBlob ||
-      privateBlob.statusCode !==
-        200 ||
-      !privateBlob.stream
-    ) {
-      throw new Error(
-        "服务器无法读取私有音频文件。",
+        {
+          status: 400,
+        },
       );
     }
 
-    const declaredSize =
-      privateBlob.blob.size;
+    const privateBlob = await get(blobPathname, {
+      access: "private",
+      token: blobToken,
+    });
 
-    if (
-      Number.isFinite(
-        declaredSize,
-      ) &&
-      declaredSize >
-        MAX_AUDIO_SIZE_BYTES
-    ) {
+    if (!privateBlob || !privateBlob.stream) {
       throw new Error(
-        "音频文件不能超过100MB。",
+        "没有读取到私有音频stream。",
       );
     }
 
     const arrayBuffer =
-      await new Response(
+      await readStreamToArrayBuffer(
         privateBlob.stream,
-      ).arrayBuffer();
-
-    if (
-      arrayBuffer.byteLength >
-      MAX_AUDIO_SIZE_BYTES
-    ) {
-      throw new Error(
-        "音频文件不能超过100MB。",
-      );
-    }
-
-    const resolvedMimeType =
-      privateBlob.blob
-        .contentType ||
-      body.mimeType;
-
-    if (
-      !ALLOWED_MIME_TYPES.has(
-        resolvedMimeType,
-      )
-    ) {
-      throw new Error(
-        "私有文件的音频格式不受支持。",
-      );
-    }
-
-    const audioBlob =
-      new Blob(
-        [arrayBuffer],
-        {
-          type: resolvedMimeType,
-        },
       );
 
-    const result =
-      await analyzeAudioWithGemini({
-        audioBlob,
-        fileName,
-        mimeType:
-          resolvedMimeType,
-      });
+    const audioBytes =
+      new Uint8Array(arrayBuffer);
 
-    return NextResponse.json(
-      result,
-    );
+    const audioBlob = new Blob([audioBytes], {
+      type: mimeType,
+    });
+
+    const identity = await recognizeWithAudD({
+      audioBlob,
+      fileName,
+    });
+
+    const result: AudioAnalysisResult = {
+      summary: buildSummary(identity),
+      comments: createCommentsFromIdentity(identity),
+      model: "AudD",
+      trackIdentity: identity,
+    };
+
+    return Response.json(result);
   } catch (error) {
-    const message =
-      createUserFacingError(
-        error,
-      );
-
     console.error(
-      "[Audio Analysis] 失败：",
+      "[AudD Analysis] 失败：",
       error,
     );
 
-    return NextResponse.json(
+    const message =
+      error instanceof Error
+        ? error.message
+        : "AudD音乐识别失败。";
+
+    return Response.json(
       {
         error: message,
       },
@@ -336,23 +353,22 @@ export async function POST(
       },
     );
   } finally {
-    try {
-      await del(
-        blobPathname,
-        {
-          token,
-        },
-      );
+    if (blobPathname) {
+      try {
+        await del(blobPathname, {
+          token: blobToken,
+        });
 
-      console.info(
-        "[Audio Analysis] 已删除私有临时音频：",
-        blobPathname,
-      );
-    } catch (error) {
-      console.error(
-        "[Audio Analysis] 删除临时音频失败：",
-        error,
-      );
+        console.log(
+          "[AudD Analysis] 已删除私有临时音频：",
+          blobPathname,
+        );
+      } catch (error) {
+        console.warn(
+          "[AudD Analysis] 删除私有临时音频失败：",
+          error,
+        );
+      }
     }
   }
 }
