@@ -7,9 +7,6 @@ import {
   type CSSProperties,
 } from "react";
 
-import { upload } from "@vercel/blob/client";
-
-import AudioAnalysisPanel from "@/components/AudioAnalysisPanel";
 import AudioUploader from "@/components/AudioUploader";
 import CurrentComment from "@/components/CurrentComment";
 import ListeningHistory from "@/components/ListeningHistory";
@@ -22,13 +19,10 @@ import { useCommentScheduler } from "@/hooks/useCommentScheduler";
 import { useLocalAudioFeatures } from "@/hooks/useLocalAudioFeatures";
 
 import type {
-  AudioAnalysisResult,
-  AudioAnalysisStatus,
   CommentFeedback,
   CompanionTone,
   DemoComment,
   ListeningMessage,
-  LocalAudioFeatures,
   PlaybackSnapshot,
 } from "@/types/music";
 
@@ -56,38 +50,6 @@ function createMessageId(): string {
   return `${Date.now()}-${Math.random()
     .toString(36)
     .slice(2)}`;
-}
-
-function sanitizeUploadFileName(fileName: string): string {
-  const cleaned = fileName
-    .replace(/[^\p{L}\p{N}._ -]/gu, "-")
-    .replace(/\s+/g, "-")
-    .slice(0, 100);
-
-  return cleaned || "audio";
-}
-
-function getAudioMimeType(file: File): string {
-  if (file.type) {
-    return file.type;
-  }
-
-  const extension =
-    file.name.split(".").pop()?.toLowerCase() ?? "";
-
-  if (extension === "wav") {
-    return "audio/wav";
-  }
-
-  if (extension === "m4a") {
-    return "audio/mp4";
-  }
-
-  if (extension === "aac") {
-    return "audio/aac";
-  }
-
-  return "audio/mpeg";
 }
 
 async function readErrorMessage(response: Response): Promise<string> {
@@ -184,6 +146,8 @@ function inferCompanionTone(text: string): CompanionTone {
       "平静",
       "空",
       "静",
+      "空灵",
+      "氛围",
     ])
   ) {
     return "quiet";
@@ -205,24 +169,6 @@ function inferCompanionTone(text: string): CompanionTone {
   }
 
   return "unknown";
-}
-
-function needsTrackIdentity(text: string): boolean {
-  const normalized = text.trim().toLowerCase();
-
-  return includesAny(normalized, [
-    "这首歌叫什么",
-    "歌名",
-    "叫什么歌",
-    "这是什么歌",
-    "识别",
-    "听出来",
-    "听得出来",
-    "谁唱的",
-    "作者",
-    "歌手",
-    "专辑",
-  ]);
 }
 
 function adaptCommentToTone(
@@ -315,14 +261,6 @@ export default function Home() {
   const [companionReplyError, setCompanionReplyError] =
     useState("");
 
-  const [analysisStatus, setAnalysisStatus] =
-    useState<AudioAnalysisStatus>("idle");
-
-  const [analysisSummary, setAnalysisSummary] =
-    useState("");
-
-  const [analysisError, setAnalysisError] = useState("");
-
   const [listeningSessionId, setListeningSessionId] =
     useState(0);
 
@@ -349,10 +287,6 @@ export default function Home() {
     trackKey,
     listeningSessionId,
   ].join("-");
-
-  const isWorking =
-    analysisStatus === "uploading" ||
-    analysisStatus === "analyzing";
 
   const hasAudio = Boolean(audioFile);
 
@@ -406,111 +340,27 @@ export default function Home() {
     setCompanionTone("unknown");
     setCompanionReplyStatus("idle");
     setCompanionReplyError("");
-    setAnalysisStatus("idle");
-    setAnalysisSummary("");
-    setAnalysisError("");
     resetLocalAudioFeatures();
 
     setListeningSessionId((previous) => previous + 1);
   }, [resetLocalAudioFeatures]);
 
-  const analyzeIdentityWithAudD = useCallback(
-    async (file: File) => {
-      setAnalysisStatus("uploading");
-      setAnalysisError("");
-
-      const safeName = sanitizeUploadFileName(file.name);
-
-      const pathname = [
-        "music-analysis",
-        `${Date.now()}-${safeName}`,
-      ].join("/");
-
-      const temporaryBlob = await upload(pathname, file, {
-        access: "private",
-        handleUploadUrl: "/api/upload-audio",
-        contentType: getAudioMimeType(file),
-        multipart: file.size > 5 * 1024 * 1024,
-      });
-
-      setAnalysisStatus("analyzing");
-
-      const response = await fetch("/api/analyze-audio", {
-        method: "POST",
-
-        headers: {
-          "Content-Type": "application/json",
-        },
-
-        body: JSON.stringify({
-          blobPathname: temporaryBlob.pathname,
-          fileName: file.name,
-          mimeType: getAudioMimeType(file),
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(await readErrorMessage(response));
-      }
-
-      const result =
-        (await response.json()) as AudioAnalysisResult;
-
-      setAnalysisSummary(result.summary);
-      setActiveComments(result.comments);
-      setListeningSessionId((previous) => previous + 1);
-      setAnalysisStatus("success");
-
-      return result;
-    },
-    [],
-  );
-
-  const handleRetry = () => {
-    if (!audioFile) {
-      return;
-    }
-
-    setAnalysisError("");
-    setAnalysisSummary("");
-    setActiveComments([]);
-
-    void analyzeIdentityWithAudD(audioFile).catch((error) => {
-      console.error("AudD识别失败：", error);
-
-      const message =
-        error instanceof Error
-          ? error.message
-          : "AudD识别失败。";
-
-      setAnalysisStatus("error");
-      setAnalysisError(message);
-    });
-  };
-
   const handleUseDemo = () => {
     setActiveComments(demoComments);
-
-    setAnalysisSummary(
-      "当前使用的是演示评论，用于测试时间轴和互动功能。",
-    );
-
     setListeningSessionId((previous) => previous + 1);
-
-    setAnalysisStatus("fallback");
   };
 
   const handleFileSelect = (file: File) => {
     setAudioFile(file);
-
     resetListeningSession();
 
-    setAnalysisStatus("idle");
-    setAnalysisError("");
-    setAnalysisSummary("");
-    setActiveComments([]);
-
-    void analyzeLocalAudioFeatures(file);
+    /*
+     * 这里只做隐藏的本地听感分析。
+     * 不显示给用户，不调用付费听歌识曲 API。
+     */
+    void analyzeLocalAudioFeatures(file).catch((error) => {
+      console.warn("本地听感分析失败：", error);
+    });
   };
 
   const handleFeedbackChange = (
@@ -576,31 +426,7 @@ export default function Home() {
     setCompanionReplyStatus("thinking");
     setCompanionReplyError("");
 
-    let summaryForReply = analysisSummary;
-    let commentsForReply = activeComments;
-    let commentForReply = currentComment;
-
     try {
-      if (
-        needsTrackIdentity(cleanText) &&
-        !analysisSummary.trim()
-      ) {
-        const identityResult =
-          await analyzeIdentityWithAudD(audioFile);
-
-        summaryForReply = identityResult.summary;
-        commentsForReply = identityResult.comments;
-        commentForReply =
-          identityResult.comments.find((comment) => {
-            return (
-              Math.abs(
-                comment.timeSeconds -
-                  playback.currentTime,
-              ) <= 12
-            );
-          }) ?? null;
-      }
-
       const streamingMessageId = createMessageId();
       const streamingCommentId = `stage9-reply-${Date.now()}`;
       let hasCreatedCompanionMessage = false;
@@ -621,15 +447,19 @@ export default function Home() {
         body: JSON.stringify({
           userMessage: cleanText,
           currentTimeSeconds: playback.currentTime,
-          audioSummary: summaryForReply,
-          currentComment: commentForReply,
+          audioSummary:
+            "当前版本不做歌名识别，也不会调用付费听歌识曲API。请不要编造歌名、歌手或专辑。",
+          currentComment,
           recentMessages: messagesForApi,
           companionTone:
             nextTone !== "unknown"
               ? nextTone
               : companionTone,
-          localAudioFeatures:
-            localAudioFeatures satisfies LocalAudioFeatures | null,
+
+          /*
+           * 隐藏上下文：前端提前分析，但页面不展示。
+           */
+          localAudioFeatures,
         }),
       });
 
@@ -756,38 +586,17 @@ export default function Home() {
         <section style={styles.heroCard}>
           <p style={styles.description}>
             {!audioFile
-              ? "选择一首音乐，播放可以立即开始。浏览器会先做本地听感分析。"
+              ? "选择一首音乐，AI会陪你聊它的听感、情绪和变化。"
               : localFeatureStatus === "analyzing"
-                ? "正在本地分析音乐能量、亮度和运动感，不影响播放。"
-                : isWorking
-                  ? "正在识别歌曲身份。这个过程可能会慢一点。"
-                  : analysisStatus === "success"
-                    ? "已获得歌曲识别结果，DeepSeek会结合本地听感分析一起回复。"
-                    : analysisStatus === "error"
-                      ? "歌曲识别暂时失败，但本地听感分析和普通聊天仍然可以继续。"
-                      : "音乐已准备好。可以直接播放，也可以和AI聊当前听感。"}
+                ? "正在理解这首歌的听感，不影响你直接播放。"
+                : "音乐已准备好。你可以直接说你的感觉，也可以问它像什么风格。"}
           </p>
 
           <AudioUploader
-            disabled={isWorking}
+            disabled={false}
             onFileSelect={handleFileSelect}
           />
         </section>
-
-        <AudioAnalysisPanel
-          status={analysisStatus}
-          summary={
-            analysisSummary ||
-            (localAudioFeatures
-              ? `本地听感分析：能量${localAudioFeatures.energyLabel}；音色${localAudioFeatures.brightnessLabel}；运动感${localAudioFeatures.motionLabel}；风格倾向 ${localAudioFeatures.styleHint}。`
-              : "")
-          }
-          error={analysisError}
-          commentCount={activeComments.length}
-          hasAudio={hasAudio}
-          onRetry={handleRetry}
-          onUseDemo={handleUseDemo}
-        />
 
         <MusicPlayer
           key={`player-${trackKey}`}
@@ -820,7 +629,7 @@ export default function Home() {
                 ? "AI正在回复中…"
                 : companionReplyStatus === "error"
                   ? companionReplyError
-                  : "你可以随时说一句你的感觉，AI会结合本地听感分析回应。"}
+                  : "你可以说一句听感，AI会结合隐藏的音乐特征回应。"}
           </div>
         )}
 
@@ -834,8 +643,18 @@ export default function Home() {
           onSend={handleUserSend}
         />
 
+        {hasAudio && activeComments.length === 0 && (
+          <button
+            type="button"
+            style={styles.demoButton}
+            onClick={handleUseDemo}
+          >
+            使用演示时间点评论
+          </button>
+        )}
+
         <footer style={styles.footer}>
-          阶段9：AudD负责歌曲识别；浏览器本地分析听感特征；DeepSeek负责陪伴式回复。
+          阶段9：当前版本不做歌名识别；本地听感分析只作为隐藏上下文；DeepSeek负责陪伴式回复。
         </footer>
       </section>
     </main>
@@ -940,6 +759,16 @@ const styles: Record<string, CSSProperties> = {
     textAlign: "center",
     boxShadow: "0 10px 34px rgba(74, 107, 163, 0.06)",
     backdropFilter: "blur(18px)",
+  },
+
+  demoButton: {
+    border: "1px solid rgba(116, 139, 181, 0.18)",
+    borderRadius: "999px",
+    padding: "8px 14px",
+    background: "rgba(255, 255, 255, 0.56)",
+    color: "var(--text-secondary)",
+    fontSize: "12px",
+    cursor: "pointer",
   },
 
   footer: {
