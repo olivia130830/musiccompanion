@@ -45,6 +45,13 @@ export default function MusicPlayer({
 
   const objectUrlRef = useRef("");
 
+  /**
+   * 记录上一次已经打印过的秒数，
+   * 避免同一秒重复发很多次。
+   */
+  const lastLoggedSecondRef =
+    useRef<number | null>(null);
+
   const [state, setState] =
     useState<AudioState>(INITIAL_STATE);
 
@@ -65,6 +72,62 @@ export default function MusicPlayer({
     state.isPlaying,
     state.isSeeking,
   ]);
+
+  /**
+   * 每一秒把当前播放时间发给后端，
+   * 让 npm run dev 的终端可以打印播放时间。
+   */
+  useEffect(() => {
+    if (!audioFile || !state.isPlaying) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      const audio = audioRef.current;
+
+      if (!audio) {
+        return;
+      }
+
+      const currentSecond = Math.floor(
+        audio.currentTime,
+      );
+      
+      if (
+        lastLoggedSecondRef.current === currentSecond
+      ) {
+        return;
+      }
+
+      lastLoggedSecondRef.current = currentSecond;
+
+      void fetch("/api/debug/playback-time", {
+        method: "POST",
+
+        headers: {
+          "Content-Type": "application/json",
+        },
+
+        body: JSON.stringify({
+          fileName: audioFile.name,
+          currentTime: audio.currentTime,
+          duration: Number.isFinite(audio.duration)
+            ? audio.duration
+            : 0,
+          isPlaying: !audio.paused,
+        }),
+      }).catch((error) => {
+        console.warn(
+          "上报播放时间失败：",
+          error,
+        );
+      });
+    }, 2000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [audioFile, state.isPlaying]);
 
   /**
    * 当用户选择或更换音乐时，
@@ -91,6 +154,8 @@ export default function MusicPlayer({
 
       objectUrlRef.current = "";
     }
+
+    lastLoggedSecondRef.current = null;
 
     setState(INITIAL_STATE);
 
@@ -195,6 +260,8 @@ export default function MusicPlayer({
     };
 
     const handleSeeked = () => {
+      lastLoggedSecondRef.current = null;
+
       setState((previous) => ({
         ...previous,
         currentTime: audio.currentTime,
@@ -213,6 +280,8 @@ export default function MusicPlayer({
     };
 
     const handleLoadStart = () => {
+      lastLoggedSecondRef.current = null;
+
       setState((previous) => ({
         ...previous,
         isLoading: true,
@@ -378,6 +447,8 @@ export default function MusicPlayer({
     }
 
     audio.currentTime = nextTime;
+
+    lastLoggedSecondRef.current = null;
 
     setState((previous) => ({
       ...previous,
