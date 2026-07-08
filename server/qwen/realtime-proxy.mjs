@@ -170,8 +170,7 @@ wss.on("connection", (browserSocket) => {
     if (
       event.type === "input_audio_buffer.append" ||
       event.type === "input_audio_buffer.commit" ||
-      event.type === "input_audio_buffer.clear" ||
-      event.type === "response.create"
+      event.type === "input_audio_buffer.clear"
     ) {
       safeSend(
         browserSocket,

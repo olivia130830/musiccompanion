@@ -1,58 +1,77 @@
 "use client";
 
-import type { CSSProperties } from "react";
+import {
+  useState,
+  type CSSProperties,
+} from "react";
+
+import {
+  AUDIO_FILE_ACCEPT,
+  getAcceptedAudioDescription,
+  isSupportedAudioFile,
+} from "@/lib/audio/formats";
 
 type AudioUploaderProps = {
   disabled?: boolean;
   onFileSelect: (file: File) => void;
 };
 
-const ACCEPTED_AUDIO_TYPES = [
-  "audio/*",
-  ".mp3",
-  ".m4a",
-  ".aac",
-  ".wav",
-  ".flac",
-  ".ogg",
-  ".oga",
-  ".webm",
-].join(",");
-
 export default function AudioUploader({
   disabled = false,
   onFileSelect,
 }: AudioUploaderProps) {
+  const [error, setError] = useState("");
+
   return (
-    <label
-      style={{
-        ...styles.uploadButton,
-        ...(disabled ? styles.disabled : null),
-      }}
-    >
-      <input
-        type="file"
-        accept={ACCEPTED_AUDIO_TYPES}
-        disabled={disabled}
-        style={styles.input}
-        onChange={(event) => {
-          const file = event.target.files?.[0];
-
-          if (!file) {
-            return;
-          }
-
-          onFileSelect(file);
-          event.target.value = "";
+    <div style={styles.wrapper}>
+      <label
+        style={{
+          ...styles.uploadButton,
+          ...(disabled ? styles.disabled : null),
         }}
-      />
+      >
+        <input
+          type="file"
+          accept={AUDIO_FILE_ACCEPT}
+          disabled={disabled}
+          style={styles.input}
+          onChange={(event) => {
+            const file = event.target.files?.[0];
 
-      选择音乐文件
-    </label>
+            if (!file) {
+              return;
+            }
+
+            if (!isSupportedAudioFile(file)) {
+              setError(
+                `暂不支持这个格式。可上传 ${getAcceptedAudioDescription()}。`,
+              );
+              event.target.value = "";
+              return;
+            }
+
+            setError("");
+            onFileSelect(file);
+            event.target.value = "";
+          }}
+        />
+
+        选择音乐文件
+      </label>
+
+      {error && <p style={styles.error}>{error}</p>}
+    </div>
   );
 }
 
 const styles: Record<string, CSSProperties> = {
+  wrapper: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "10px",
+  },
+
   uploadButton: {
     display: "inline-flex",
     alignItems: "center",
@@ -75,5 +94,14 @@ const styles: Record<string, CSSProperties> = {
 
   input: {
     display: "none",
+  },
+
+  error: {
+    maxWidth: "420px",
+    margin: 0,
+    color: "#c2410c",
+    fontSize: "12px",
+    lineHeight: 1.6,
+    textAlign: "center",
   },
 };

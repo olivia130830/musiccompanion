@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -9,6 +10,10 @@ import {
 } from "react";
 
 import type { PlaybackSnapshot } from "@/types/music";
+import {
+  createPlayableAudioBlob,
+  getAcceptedAudioDescription,
+} from "@/lib/audio/formats";
 
 type MusicPlayerProps = {
   audioFile: File | null;
@@ -35,40 +40,38 @@ function formatTime(seconds: number) {
   return `${minutes}:${remainingSeconds}`;
 }
 
-function getAudioErrorText(audio: HTMLAudioElement | null) {
-  const code = audio?.error?.code;
-
-  if (code === MediaError.MEDIA_ERR_ABORTED) {
-    return "播放被中断。";
-  }
-
-  if (code === MediaError.MEDIA_ERR_NETWORK) {
-    return "音频加载失败，请重新选择文件。";
-  }
-
-  if (code === MediaError.MEDIA_ERR_DECODE) {
-    return "这个音频文件无法被浏览器解码，可以换成 mp3、m4a 或 wav 再试。";
-  }
-
-  if (code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
-    return "当前浏览器不支持这个音频格式，可以换成 mp3、m4a 或 wav。";
-  }
-
-  return "播放失败，请检查音频文件。";
+function getAudioContextClass() {
+  return (
+    window.AudioContext ||
+    (
+      window as typeof window & {
+        webkitAudioContext?: typeof AudioContext;
+      }
+    ).webkitAudioContext
+  );
 }
 
 export default function MusicPlayer({
   audioFile,
   onPlaybackStateChange,
 }: MusicPlayerProps) {
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const objectUrlRef = useRef("");
-  const isSeekingRef = useRef(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioBufferRef = useRef<AudioBuffer | null>(null);
+  const sourceRef =
+    useRef<AudioBufferSourceNode | null>(null);
+  const progressIntervalRef = useRef<number | null>(null);
+  const playRequestIdRef = useRef(0);
+  const startedAtRef = useRef(0);
+  const pausedAtRef = useRef(0);
+  const playbackRef =
+    useRef<PlaybackSnapshot>(INITIAL_PLAYBACK);
 
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [playback, setPlayback] =
     useState<PlaybackSnapshot>(INITIAL_PLAYBACK);
   const [playerError, setPlayerError] = useState("");
+  const [isDecoding, setIsDecoding] = useState(false);
+  const [hasDecodedAudio, setHasDecodedAudio] =
+    useState(false);
 
   const fileLabel = useMemo(() => {
     if (!audioFile) {
@@ -78,116 +81,340 @@ export default function MusicPlayer({
     return audioFile.name;
   }, [audioFile]);
 
-  useEffect(() => {
-    if (objectUrlRef.current) {
-      URL.revokeObjectURL(objectUrlRef.current);
-      objectUrlRef.current = "";
+  const updatePlayback = useCallback(
+    (nextPlayback: PlaybackSnapshot) => {
+      playbackRef.current = nextPlayback;
+      setPlayback(nextPlayback);
+      onPlaybackStateChange(nextPlayback);
+    },
+    [onPlaybackStateChange],
+  );
+
+  const stopProgressLoop = useCallback(() => {
+    if (progressIntervalRef.current !== null) {
+      window.clearInterval(progressIntervalRef.current);
+      progressIntervalRef.current = null;
     }
+  }, []);
 
-    setAudioUrl(null);
-    setPlayerError("");
-    setPlayback(INITIAL_PLAYBACK);
-    onPlaybackStateChange(INITIAL_PLAYBACK);
+  const stopSource = useCallback(() => {
+    const source = sourceRef.current;
 
-    if (!audioFile) {
+    if (!source) {
       return;
     }
 
-    const nextUrl = URL.createObjectURL(audioFile);
-    objectUrlRef.current = nextUrl;
-    setAudioUrl(nextUrl);
+    sourceRef.current = null;
+    source.onended = null;
 
-    return () => {
-      if (objectUrlRef.current) {
-        URL.revokeObjectURL(objectUrlRef.current);
-        objectUrlRef.current = "";
-      }
-    };
-  }, [audioFile, onPlaybackStateChange]);
+    try {
+      source.stop();
+    } catch {}
 
-  const updatePlayback = (nextPlayback: PlaybackSnapshot) => {
-    setPlayback(nextPlayback);
-    onPlaybackStateChange(nextPlayback);
-  };
+    try {
+      source.disconnect();
+    } catch {}
+  }, []);
 
-  const readAudioSnapshot = (): PlaybackSnapshot => {
-    const audio = audioRef.current;
+  const readPlayingTime = useCallback(() => {
+    const audioContext = audioContextRef.current;
+    const audioBuffer = audioBufferRef.current;
 
-    if (!audio) {
-      return INITIAL_PLAYBACK;
+    if (!audioContext || !audioBuffer) {
+      return 0;
     }
 
-    return {
-      currentTime: audio.currentTime || 0,
-      duration: Number.isFinite(audio.duration)
-        ? audio.duration
-        : 0,
-      isPlaying: !audio.paused && !audio.ended,
-      isSeeking: isSeekingRef.current,
-    };
-  };
+    return Math.min(
+      audioBuffer.duration,
+      Math.max(
+        0,
+        audioContext.currentTime - startedAtRef.current,
+      ),
+    );
+  }, []);
 
-  const handleLoadedMetadata = () => {
-    setPlayerError("");
-    updatePlayback(readAudioSnapshot());
-  };
+  const updatePlayingProgress = useCallback(() => {
+    const audioBuffer = audioBufferRef.current;
 
-  const handleCanPlay = () => {
-    setPlayerError("");
-    updatePlayback(readAudioSnapshot());
-  };
+    if (!audioBuffer || !sourceRef.current) {
+      return;
+    }
 
-  const handleTimeUpdate = () => {
-    updatePlayback(readAudioSnapshot());
-  };
+    const currentTime = readPlayingTime();
 
-  const handlePlay = () => {
-    setPlayerError("");
-    updatePlayback(readAudioSnapshot());
-  };
-
-  const handlePause = () => {
-    updatePlayback(readAudioSnapshot());
-  };
-
-  const handleEnded = () => {
-    updatePlayback({
-      ...readAudioSnapshot(),
-      isPlaying: false,
-    });
-  };
-
-  const handleSeeking = () => {
-    isSeekingRef.current = true;
+    pausedAtRef.current = currentTime;
 
     updatePlayback({
-      ...readAudioSnapshot(),
-      isSeeking: true,
-    });
-  };
-
-  const handleSeeked = () => {
-    isSeekingRef.current = false;
-
-    updatePlayback({
-      ...readAudioSnapshot(),
+      currentTime,
+      duration: audioBuffer.duration,
+      isPlaying: true,
       isSeeking: false,
     });
-  };
 
-  const handleError = () => {
-    const audio = audioRef.current;
+  }, [readPlayingTime, updatePlayback]);
 
-    if (!audio?.error) {
+  const startProgressLoop = useCallback(() => {
+    stopProgressLoop();
+    updatePlayingProgress();
+
+    progressIntervalRef.current = window.setInterval(
+      updatePlayingProgress,
+      160,
+    );
+  }, [
+    stopProgressLoop,
+    updatePlayingProgress,
+  ]);
+
+  const pausePlayback = useCallback(() => {
+    const audioBuffer = audioBufferRef.current;
+
+    if (!audioBuffer) {
       return;
     }
 
-    setPlayerError(getAudioErrorText(audio));
+    const currentTime = readPlayingTime();
+    pausedAtRef.current = currentTime;
+
+    playRequestIdRef.current += 1;
+    stopProgressLoop();
+    stopSource();
 
     updatePlayback({
-      ...readAudioSnapshot(),
+      currentTime,
+      duration: audioBuffer.duration,
       isPlaying: false,
+      isSeeking: false,
     });
+  }, [
+    readPlayingTime,
+    stopProgressLoop,
+    stopSource,
+    updatePlayback,
+  ]);
+
+  const playFrom = useCallback(
+    async (startSeconds: number) => {
+      const audioContext = audioContextRef.current;
+      const audioBuffer = audioBufferRef.current;
+      const requestId = playRequestIdRef.current + 1;
+
+      playRequestIdRef.current = requestId;
+
+      if (!audioContext || !audioBuffer) {
+        return;
+      }
+
+      await audioContext.resume();
+
+      if (requestId !== playRequestIdRef.current) {
+        return;
+      }
+
+      stopProgressLoop();
+      stopSource();
+
+      const safeStart = Math.min(
+        Math.max(0, startSeconds),
+        Math.max(0, audioBuffer.duration - 0.01),
+      );
+
+      if (safeStart >= audioBuffer.duration) {
+        pausedAtRef.current = 0;
+        updatePlayback({
+          currentTime: audioBuffer.duration,
+          duration: audioBuffer.duration,
+          isPlaying: false,
+          isSeeking: false,
+        });
+        return;
+      }
+
+      const source = audioContext.createBufferSource();
+
+      source.buffer = audioBuffer;
+      source.connect(audioContext.destination);
+      source.onended = () => {
+        if (sourceRef.current !== source) {
+          return;
+        }
+
+        sourceRef.current = null;
+        pausedAtRef.current = 0;
+        stopProgressLoop();
+
+        updatePlayback({
+          currentTime: audioBuffer.duration,
+          duration: audioBuffer.duration,
+          isPlaying: false,
+          isSeeking: false,
+        });
+      };
+
+      sourceRef.current = source;
+      startedAtRef.current =
+        audioContext.currentTime - safeStart;
+      pausedAtRef.current = safeStart;
+
+      source.start(0, safeStart);
+      startProgressLoop();
+    },
+    [
+      startProgressLoop,
+      stopProgressLoop,
+      stopSource,
+      updatePlayback,
+    ],
+  );
+
+  useEffect(() => {
+    playbackRef.current = playback;
+  }, [playback]);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    stopProgressLoop();
+    stopSource();
+
+    audioBufferRef.current = null;
+    pausedAtRef.current = 0;
+    startedAtRef.current = 0;
+    window.setTimeout(() => {
+      setHasDecodedAudio(false);
+    }, 0);
+
+    if (!audioFile) {
+      window.setTimeout(() => {
+        updatePlayback(INITIAL_PLAYBACK);
+        setPlayerError("");
+        setIsDecoding(false);
+        setHasDecodedAudio(false);
+      }, 0);
+      return;
+    }
+
+    const AudioContextClass = getAudioContextClass();
+
+    if (!AudioContextClass) {
+      window.setTimeout(() => {
+        setPlayerError(
+          "当前浏览器不支持 Web Audio，无法播放这个音频。",
+        );
+        setIsDecoding(false);
+        setHasDecodedAudio(false);
+        updatePlayback(INITIAL_PLAYBACK);
+      }, 0);
+      return;
+    }
+
+    const audioContext =
+      audioContextRef.current || new AudioContextClass();
+
+    audioContextRef.current = audioContext;
+    window.setTimeout(() => {
+      setIsDecoding(true);
+      setPlayerError("");
+      updatePlayback(INITIAL_PLAYBACK);
+    }, 0);
+
+    void createPlayableAudioBlob(audioFile)
+      .arrayBuffer()
+      .then((arrayBuffer) =>
+        audioContext.decodeAudioData(arrayBuffer.slice(0)),
+      )
+      .then((audioBuffer) => {
+        if (isCancelled) {
+          return;
+        }
+
+        audioBufferRef.current = audioBuffer;
+        setHasDecodedAudio(true);
+        pausedAtRef.current = 0;
+        setIsDecoding(false);
+
+        updatePlayback({
+          currentTime: 0,
+          duration: audioBuffer.duration,
+          isPlaying: false,
+          isSeeking: false,
+        });
+      })
+      .catch((error) => {
+        if (isCancelled) {
+          return;
+        }
+
+        const message =
+          error instanceof Error
+            ? error.message
+            : "音频解码失败。";
+
+        setIsDecoding(false);
+        setHasDecodedAudio(false);
+        setPlayerError(
+          `这个音频仍然无法解码，可以换成 ${getAcceptedAudioDescription()}。具体原因：${message}`,
+        );
+        updatePlayback(INITIAL_PLAYBACK);
+      });
+
+    return () => {
+      isCancelled = true;
+      stopProgressLoop();
+      stopSource();
+    };
+  }, [
+    audioFile,
+    stopProgressLoop,
+    stopSource,
+    updatePlayback,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      stopProgressLoop();
+      stopSource();
+      void audioContextRef.current?.close();
+      audioContextRef.current = null;
+    };
+  }, [stopProgressLoop, stopSource]);
+
+  const handlePlayPause = () => {
+    if (playback.isPlaying) {
+      pausePlayback();
+      return;
+    }
+
+    void playFrom(pausedAtRef.current);
+  };
+
+  const handleSeekChange = (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const audioBuffer = audioBufferRef.current;
+
+    if (!audioBuffer) {
+      return;
+    }
+
+    const nextTime = Number(event.target.value);
+    const wasPlaying = playbackRef.current.isPlaying;
+
+    pausedAtRef.current = nextTime;
+    stopProgressLoop();
+    stopSource();
+
+    if (wasPlaying) {
+      void playFrom(nextTime);
+    } else {
+      playRequestIdRef.current += 1;
+      updatePlayback({
+        currentTime: nextTime,
+        duration: audioBuffer.duration,
+        isPlaying: false,
+        isSeeking: false,
+      });
+    }
   };
 
   if (!audioFile) {
@@ -212,26 +439,39 @@ export default function MusicPlayer({
         </div>
       </div>
 
-      {audioUrl ? (
-        <audio
-          key={audioUrl}
-          ref={audioRef}
-          src={audioUrl}
-          controls
-          preload="metadata"
-          style={styles.audio}
-          onLoadedMetadata={handleLoadedMetadata}
-          onCanPlay={handleCanPlay}
-          onTimeUpdate={handleTimeUpdate}
-          onPlay={handlePlay}
-          onPause={handlePause}
-          onEnded={handleEnded}
-          onSeeking={handleSeeking}
-          onSeeked={handleSeeked}
-          onError={handleError}
+      <div style={styles.controls}>
+        <button
+          type="button"
+          style={styles.playButton}
+          onClick={handlePlayPause}
+          disabled={isDecoding || !hasDecodedAudio}
+          aria-label={playback.isPlaying ? "暂停" : "播放"}
+        >
+          {playback.isPlaying ? "II" : "▶"}
+        </button>
+
+        <span style={styles.controlTime}>
+          {formatTime(playback.currentTime)} /{" "}
+          {formatTime(playback.duration)}
+        </span>
+
+        <input
+          type="range"
+          min={0}
+          max={Math.max(playback.duration, 0)}
+          step={0.01}
+          value={Math.min(
+            playback.currentTime,
+            playback.duration || 0,
+          )}
+          onChange={handleSeekChange}
+          disabled={isDecoding || !hasDecodedAudio}
+          style={styles.progress}
         />
-      ) : (
-        <p style={styles.emptyText}>正在准备播放器…</p>
+      </div>
+
+      {isDecoding && (
+        <p style={styles.emptyText}>正在解码音频…</p>
       )}
 
       {playerError && (
@@ -282,8 +522,41 @@ const styles: Record<string, CSSProperties> = {
     lineHeight: 1.5,
   },
 
-  audio: {
+  controls: {
+    display: "grid",
+    gridTemplateColumns: "44px 112px 1fr",
+    alignItems: "center",
+    gap: "12px",
+    minHeight: "64px",
+    padding: "12px 16px",
+    borderRadius: "999px",
+    background: "rgba(245, 246, 248, 0.86)",
+  },
+
+  playButton: {
+    width: "36px",
+    height: "36px",
+    border: "none",
+    borderRadius: "999px",
+    padding: 0,
+    background: "transparent",
+    color: "var(--text-secondary)",
+    fontSize: "19px",
+    lineHeight: "36px",
+    cursor: "pointer",
+    textAlign: "center",
+  },
+
+  controlTime: {
+    color: "var(--text-primary)",
+    fontSize: "22px",
+    lineHeight: 1,
+    fontVariantNumeric: "tabular-nums",
+  },
+
+  progress: {
     width: "100%",
+    accentColor: "var(--accent)",
   },
 
   errorText: {
@@ -294,7 +567,7 @@ const styles: Record<string, CSSProperties> = {
   },
 
   emptyText: {
-    margin: 0,
+    margin: "10px 0 0",
     color: "var(--text-tertiary)",
     fontSize: "13px",
     lineHeight: 1.6,

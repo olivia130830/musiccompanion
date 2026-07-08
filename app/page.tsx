@@ -12,23 +12,23 @@ import {
 import {
   QwenRealtimeClient,
   type QwenRealtimeStatus,
-} from "@/utils/qwenRealtimeClient";
+} from "@/lib/qwen/realtimeClient";
+import {
+  getFileExtension,
+  inferAudioMimeType,
+  isSupportedAudioFile,
+} from "@/lib/audio/formats";
 
 import AudioUploader from "@/components/AudioUploader";
-import CurrentComment from "@/components/CurrentComment";
 import ListeningHistory from "@/components/ListeningHistory";
 import MusicPlayer from "@/components/MusicPlayer";
 import UserReplyBox from "@/components/UserReplyBox";
 
-import { demoComments } from "@/data/demoComments";
-
-import { useCommentScheduler } from "@/hooks/useCommentScheduler";
 import { useLocalAudioFeatures } from "@/hooks/useLocalAudioFeatures";
 
 import type {
   CommentFeedback,
-  CompanionTone,
-  DemoComment,
+  LocalAudioFeatures,
   ListeningMessage,
   PlaybackSnapshot,
 } from "@/types/music";
@@ -52,6 +52,8 @@ type QwenMomentStatus =
   | "commenting"
   | "error";
 
+type QwenPromptKind = "user_reply" | "proactive_comment";
+
 function createMessageId(): string {
   if (
     typeof crypto !== "undefined" &&
@@ -63,161 +65,6 @@ function createMessageId(): string {
   return `${Date.now()}-${Math.random()
     .toString(36)
     .slice(2)}`;
-}
-
-function includesAny(
-  text: string,
-  keywords: string[],
-): boolean {
-  return keywords.some((keyword) => text.includes(keyword));
-}
-
-function inferCompanionTone(text: string): CompanionTone {
-  const normalized = text.trim().toLowerCase();
-
-  if (
-    includesAny(normalized, [
-      "孤独",
-      "难过",
-      "悲伤",
-      "伤感",
-      "压抑",
-      "emo",
-      "失落",
-      "沉重",
-      "想哭",
-    ])
-  ) {
-    return "sad";
-  }
-
-  if (
-    includesAny(normalized, [
-      "燃",
-      "炸",
-      "爽",
-      "激动",
-      "热血",
-      "强",
-      "冲",
-      "快",
-      "有劲",
-      "震撼",
-    ])
-  ) {
-    return "excited";
-  }
-
-  if (
-    includesAny(normalized, [
-      "温暖",
-      "治愈",
-      "可爱",
-      "甜",
-      "亲切",
-      "安心",
-      "柔和",
-      "浪漫",
-    ])
-  ) {
-    return "warm";
-  }
-
-  if (
-    includesAny(normalized, [
-      "安静",
-      "轻",
-      "慢",
-      "柔",
-      "平静",
-      "空",
-      "静",
-      "空灵",
-      "氛围",
-    ])
-  ) {
-    return "quiet";
-  }
-
-  if (
-    includesAny(normalized, [
-      "为什么",
-      "怎么",
-      "咋",
-      "哪里",
-      "是不是",
-      "有没有",
-      "？",
-      "?",
-    ])
-  ) {
-    return "curious";
-  }
-
-  return "unknown";
-}
-
-function adaptCommentToTone(
-  comment: DemoComment,
-  tone: CompanionTone,
-): DemoComment {
-  if (tone === "unknown") {
-    return comment;
-  }
-
-  const original = comment.comment.trim();
-
-  if (!original) {
-    return comment;
-  }
-
-  const hasToneAlready = includesAny(original, [
-    "安静",
-    "轻",
-    "慢",
-    "燃",
-    "冲",
-    "孤独",
-    "沉",
-    "温暖",
-    "靠近",
-    "好奇",
-    "变化",
-  ]);
-
-  if (hasToneAlready) {
-    return comment;
-  }
-
-  const shouldAdapt =
-    comment.eventType === "emotion_shift" ||
-    comment.eventType === "pause" ||
-    comment.eventType === "rhythm_entry";
-
-  if (!shouldAdapt) {
-    return comment;
-  }
-
-  const tonePrefix: Record<
-    Exclude<CompanionTone, "unknown">,
-    string
-  > = {
-    quiet: "这里可以轻一点听，",
-    excited: "这里有点推起来了，",
-    sad: "这里有点往心里沉，",
-    warm: "这里有点暖起来，",
-    curious: "这里的变化挺值得听，",
-  };
-
-  const nextComment = `${tonePrefix[tone]}${original}`;
-
-  return {
-    ...comment,
-    comment:
-      nextComment.length > 40
-        ? nextComment.slice(0, 40)
-        : nextComment,
-  };
 }
 
 function getRealtimeStatusText(
@@ -242,18 +89,18 @@ function getRealtimeStatusText(
 
 function getQwenMomentStatusText(status: QwenMomentStatus) {
   if (status === "connected") {
-    return "Realtime 已连接。当前不会再发送音乐 PCM，避免 1011 断连。";
+    return "Realtime 已连接。用户消息和主动短评会交给千问生成。";
   }
 
   if (status === "commenting") {
-    return "正在生成主动陪听短评。";
+    return "正在请求千问生成主动陪听短评。";
   }
 
   if (status === "error") {
-    return "Realtime 连接不稳定，当前只保留连接状态。";
+    return "Realtime 连接不稳定，暂时无法请求千问。";
   }
 
-  return "播放时会自动生成主动陪听短评。";
+  return "播放时会自动请求千问生成主动陪听短评。";
 }
 
 function normalizeText(text: string) {
@@ -293,119 +140,123 @@ function isDuplicateCompanionReply(
   });
 }
 
-function pickByIndex<T>(items: T[], index: number) {
-  return items[Math.abs(index) % items.length];
+function formatPlaybackTime(seconds: number) {
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const restSeconds = safeSeconds % 60;
+
+  return `${minutes}:${restSeconds.toString().padStart(2, "0")}`;
 }
 
-function createProactiveRealtimeComment(
-  playback: PlaybackSnapshot,
-  recentMessages: ListeningMessage[],
+function formatFileSize(bytes: number) {
+  if (bytes < 1024 * 1024) {
+    return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  }
+
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function createTranscodedFileName(fileName: string) {
+  const dotIndex = fileName.lastIndexOf(".");
+  const baseName =
+    dotIndex > 0 ? fileName.slice(0, dotIndex) : fileName;
+
+  return `${baseName}-converted.wav`;
+}
+
+function formatNullableNumber(
+  value: number | null,
+  fractionDigits = 3,
 ) {
-  const currentTime = Math.floor(playback.currentTime);
-
-  const recentUserText = recentMessages
-    .filter((message) => message.sender === "user")
-    .slice(-4)
-    .map((message) => message.text)
-    .join(" ");
-
-  const recentCompanionText = recentMessages
-    .filter((message) => message.sender === "companion")
-    .slice(-6)
-    .map((message) => message.text)
-    .join(" ");
-
-  const avoidRepeated = (candidates: string[]) => {
-    const normalizedRecent = normalizeText(recentCompanionText);
-
-    const filtered = candidates.filter((candidate) => {
-      const normalizedCandidate = normalizeText(candidate);
-
-      return !normalizedRecent.includes(normalizedCandidate);
-    });
-
-    if (filtered.length > 0) {
-      return pickByIndex(filtered, currentTime);
-    }
-
-    return pickByIndex(candidates, currentTime + recentMessages.length);
-  };
-
-  if (
-    recentUserText.includes("琵琶") ||
-    recentUserText.includes("民乐") ||
-    recentUserText.includes("中国风")
-  ) {
-    return avoidRepeated([
-      "琵琶进来后，背景一下子有了更清楚的颗粒感。",
-      "这里的民乐音色不是主角，但很会补氛围。",
-      "这个琵琶音色像是在背景里点了一下光。",
-      "它不是突然抢出来，而是在后面悄悄把质感加厚了。",
-    ]);
+  if (typeof value !== "number") {
+    return "未知";
   }
 
-  if (
-    recentUserText.includes("主歌") ||
-    recentUserText.includes("第二段") ||
-    recentUserText.includes("副歌")
-  ) {
-    return avoidRepeated([
-      "到这一段之后，结构感比前面更清楚了。",
-      "这里像是进入了新的段落，但情绪没有完全断开。",
-      "这一段和前面相比，更像是在把叙述继续往前推。",
-      "这里不是单纯重复，段落的重心已经换了一点。",
-    ]);
+  return value.toFixed(fractionDigits);
+}
+
+function formatLocalAudioFeatures(
+  features: LocalAudioFeatures | null,
+) {
+  if (!features) {
+    return "本地音频特征还在分析中或暂不可用。";
   }
 
-  if (
-    recentUserText.includes("安静") ||
-    recentUserText.includes("轻") ||
-    recentUserText.includes("空")
-  ) {
-    return avoidRepeated([
-      "这个开头的留白感挺明显，不是空，是在等后面进来。",
-      "这里的安静更像是在铺空间，不是单纯声音少。",
-      "开头这段可以听它怎么慢慢把距离拉开。",
-      "这段的轻不是弱，而是把情绪压得比较低。",
-    ]);
-  }
+  return [
+    `浏览器本地分析时长：${
+      features.durationSeconds
+        ? formatPlaybackTime(features.durationSeconds)
+        : "未知"
+    }`,
+    `采样率：${
+      features.sampleRate ? `${features.sampleRate} Hz` : "未知"
+    }`,
+    `声道数：${features.channels ?? "未知"}`,
+    `能量：${features.energyLabel}`,
+    `亮度：${features.brightnessLabel}`,
+    `运动感：${features.motionLabel}`,
+    `风格提示：${features.styleHint}`,
+    `RMS：${formatNullableNumber(features.rms)}`,
+    `平均振幅：${formatNullableNumber(features.averageAmplitude)}`,
+    `过零率：${formatNullableNumber(features.zeroCrossingRate)}`,
+    `分析说明：${features.analysisNote}`,
+  ].join("\n");
+}
 
-  if (currentTime < 30) {
-    return avoidRepeated([
-      "开头这段像是在把空间慢慢撑开。",
-      "这里先别急着找高潮，先听它怎么铺底。",
-      "这一段的进入感挺明显，像是在慢慢拉你进去。",
-      "这里可以先听音色，不一定只听旋律。",
-    ]);
-  }
+function buildQwenPrompt({
+  kind,
+  audioFile,
+  playback,
+  messages,
+  localAudioFeatures,
+  userText,
+}: {
+  kind: QwenPromptKind;
+  audioFile: File;
+  playback: PlaybackSnapshot;
+  messages: ListeningMessage[];
+  localAudioFeatures: LocalAudioFeatures | null;
+  userText?: string;
+}) {
+  const currentTime = formatPlaybackTime(playback.currentTime);
+  const duration = playback.duration
+    ? formatPlaybackTime(playback.duration)
+    : "未知";
+  const recentMessages = messages.slice(-10);
+  const history =
+    recentMessages.length > 0
+      ? recentMessages
+          .map((message) => {
+            const speaker =
+              message.sender === "user" ? "用户" : "你";
+            const messageTime = formatPlaybackTime(
+              message.musicTimeSeconds,
+            );
 
-  if (currentTime < 70) {
-    return avoidRepeated([
-      "这里的层次比前面更清楚了一点。",
-      "这段有一点往前推的感觉，但还没完全爆开。",
-      "这里可以重点听背景里的细节变化。",
-      "这一段像是在把情绪往更深的地方带。",
-      "这里不是突然变强，而是慢慢加压。",
-    ]);
-  }
+            return `${speaker}@${messageTime}：${message.text}`;
+          })
+          .join("\n")
+      : "暂无。";
+  const task =
+    kind === "user_reply"
+      ? `用户刚刚说：${userText ?? ""}\n请结合上下文自然回应。`
+      : "现在到达新的播放时间点，请主动给一句陪听短评。";
 
-  if (currentTime < 120) {
-    return avoidRepeated([
-      "这一段的重点开始从铺垫转到表达了。",
-      "这里可以听到背景和主线之间有一点拉扯。",
-      "这段更像是在把前面的情绪重新组织起来。",
-      "它没有完全换气质，但质感已经比前面更厚。",
-      "这里的变化比较细，不是那种一下子跳出来的变化。",
-    ]);
-  }
-
-  return avoidRepeated([
-    "这里可以回头对比前面，能听到情绪已经变了。",
-    "这一段更像是在延续氛围，不是单纯重复。",
-    "这里的重点可能不是旋律，而是整体的包围感。",
-    "这段有点像把前面的情绪重新整理了一遍。",
-    "现在听它的尾巴会更有意思，很多细节藏在后面。",
-  ]);
+  return [
+    "你正在和用户一起听歌，请用中文回复。",
+    "回复要求：只输出一句话，尽量不超过45个中文字符；像真实朋友陪听；不要输出列表；不要说你无法听音频；不要编造没有上下文或本地音频特征支持的具体乐器或歌词。",
+    `歌曲文件名：${audioFile.name}`,
+    `文件格式：${inferAudioMimeType(audioFile) || getFileExtension(audioFile.name) || "未知"}`,
+    `文件大小：${formatFileSize(audioFile.size)}`,
+    `当前播放：${currentTime} / ${duration}`,
+    `播放状态：${playback.isPlaying ? "正在播放" : "暂停"}`,
+    "本地音频特征：",
+    formatLocalAudioFeatures(localAudioFeatures),
+    "最近 messages：",
+    history,
+    "当前任务：",
+    task,
+  ].join("\n");
 }
 
 export default function Home() {
@@ -422,21 +273,11 @@ export default function Home() {
   const [feedbackByCommentId, setFeedbackByCommentId] =
     useState<Record<string, CommentFeedback>>({});
 
-  const [activeComments, setActiveComments] = useState<
-    DemoComment[]
-  >([]);
-
-  const [companionTone, setCompanionTone] =
-    useState<CompanionTone>("unknown");
-
   const [companionReplyStatus, setCompanionReplyStatus] =
     useState<CompanionReplyStatus>("idle");
 
   const [companionReplyError, setCompanionReplyError] =
     useState("");
-
-  const [listeningSessionId, setListeningSessionId] =
-    useState(0);
 
   const [qwenRealtimeStatus, setQwenRealtimeStatus] =
     useState<QwenRealtimeStatus | "not_started">(
@@ -445,6 +286,12 @@ export default function Home() {
 
   const [qwenRealtimeError, setQwenRealtimeError] =
     useState("");
+
+  const [audioFileError, setAudioFileError] =
+    useState("");
+
+  const [isPreparingAudio, setIsPreparingAudio] =
+    useState(false);
 
   const [qwenMomentStatus, setQwenMomentStatus] =
     useState<QwenMomentStatus>("idle");
@@ -459,6 +306,8 @@ export default function Home() {
 
   const lastQwenReconnectMsRef = useRef(0);
 
+  const pendingQwenPromptRef = useRef<string | null>(null);
+
   const playbackRef =
     useRef<PlaybackSnapshot>(INITIAL_PLAYBACK);
 
@@ -466,6 +315,7 @@ export default function Home() {
 
   const {
     status: localFeatureStatus,
+    features: localAudioFeatures,
     analyzeFile: analyzeLocalAudioFeatures,
     reset: resetLocalAudioFeatures,
   } = useLocalAudioFeatures();
@@ -482,18 +332,7 @@ export default function Home() {
     ].join("-");
   }, [audioFile]);
 
-  const schedulerKey = [
-    trackKey,
-    listeningSessionId,
-  ].join("-");
-
   const hasAudio = Boolean(audioFile);
-
-  const companionComments = useMemo(() => {
-    return activeComments.map((comment) =>
-      adaptCommentToTone(comment, companionTone),
-    );
-  }, [activeComments, companionTone]);
 
   useEffect(() => {
     playbackRef.current = playback;
@@ -548,10 +387,7 @@ export default function Home() {
   );
 
   const connectQwenRealtime = useCallback(() => {
-    if (
-      qwenClientRef.current &&
-      qwenClientRef.current.isReady()
-    ) {
+    if (qwenClientRef.current) {
       return qwenClientRef.current;
     }
 
@@ -567,6 +403,17 @@ export default function Home() {
           qwenReadyRef.current = true;
           setQwenMomentStatus("connected");
           setQwenRealtimeError("");
+
+          const pendingPrompt = pendingQwenPromptRef.current;
+
+          if (
+            pendingPrompt &&
+            qwenClientRef.current?.sendTextMessage(pendingPrompt)
+          ) {
+            pendingQwenPromptRef.current = null;
+            setCompanionReplyStatus("streaming");
+            setQwenMomentStatus("commenting");
+          }
         }
 
         if (
@@ -575,6 +422,7 @@ export default function Home() {
         ) {
           qwenReadyRef.current = false;
           qwenClientRef.current = null;
+          pendingQwenPromptRef.current = null;
           setQwenMomentStatus("error");
         }
       },
@@ -583,12 +431,17 @@ export default function Home() {
 
       onTextDone: (text) => {
         addCompanionMessage(text, "qwen-realtime");
+        setCompanionReplyStatus("idle");
+        setQwenMomentStatus("connected");
       },
 
       onError: (message) => {
         setQwenRealtimeError(message);
+        setCompanionReplyStatus("error");
+        setCompanionReplyError(message);
         qwenReadyRef.current = false;
         qwenClientRef.current = null;
+        pendingQwenPromptRef.current = null;
         setQwenMomentStatus("error");
       },
 
@@ -607,73 +460,125 @@ export default function Home() {
     qwenClientRef.current?.disconnect();
     qwenClientRef.current = null;
     qwenReadyRef.current = false;
+    pendingQwenPromptRef.current = null;
     setQwenMomentStatus("idle");
     setQwenRealtimeStatus("closed");
   }, []);
 
-  const handleCommentTriggered = useCallback(
-    (comment: DemoComment) => {
-      setListeningMessages((previousMessages) => {
-        const alreadyExists = previousMessages.some(
-          (message) =>
-            message.sender === "companion" &&
-            message.commentId === comment.id,
-        );
+  const sendPromptToQwen = useCallback(
+    (prompt: string) => {
+      const client = connectQwenRealtime();
 
-        if (alreadyExists) {
-          return previousMessages;
-        }
+      setCompanionReplyStatus("thinking");
+      setCompanionReplyError("");
+      setQwenRealtimeError("");
 
-        const newMessage: ListeningMessage = {
-          id: `companion-${comment.id}`,
-          sender: "companion",
-          text: comment.comment,
-          musicTimeSeconds: comment.timeSeconds,
-          commentId: comment.id,
-        };
+      if (client.isReady() && client.sendTextMessage(prompt)) {
+        setCompanionReplyStatus("streaming");
+        setQwenMomentStatus("commenting");
+        return true;
+      }
 
-        return [...previousMessages, newMessage];
-      });
+      pendingQwenPromptRef.current = prompt;
+      setQwenMomentStatus("commenting");
+      return false;
     },
-    [],
+    [connectQwenRealtime],
   );
-
-  const { currentComment } = useCommentScheduler({
-    comments: companionComments,
-    currentTime: playback.currentTime,
-    isPlaying: playback.isPlaying,
-    isSeeking: playback.isSeeking,
-    trackKey: schedulerKey,
-    onCommentTriggered: handleCommentTriggered,
-  });
 
   const resetListeningSession = useCallback(() => {
     setPlayback(INITIAL_PLAYBACK);
     setListeningMessages([]);
     setFeedbackByCommentId({});
-    setActiveComments([]);
-    setCompanionTone("unknown");
     setCompanionReplyStatus("idle");
     setCompanionReplyError("");
     setQwenRealtimeError("");
+    setAudioFileError("");
     setQwenMomentStatus("idle");
     resetLocalAudioFeatures();
 
     lastRealtimeCommentSecondRef.current = 0;
-
-    setListeningSessionId((previous) => previous + 1);
   }, [resetLocalAudioFeatures]);
 
-  const handleUseDemo = () => {
-    setActiveComments(demoComments);
-    setListeningSessionId((previous) => previous + 1);
+  const transcodeAudioFile = async (file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const response = await fetch("/api/audio/transcode", {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      let message = "音频转码失败。";
+
+      try {
+        const body =
+          (await response.json()) as {
+            error?: string;
+          };
+
+        message = body.error || message;
+      } catch {}
+
+      throw new Error(message);
+    }
+
+    const blob = await response.blob();
+
+    return new File(
+      [blob],
+      createTranscodedFileName(file.name),
+      {
+        type: "audio/wav",
+        lastModified: Date.now(),
+      },
+    );
   };
 
-  const handleFileSelect = (file: File) => {
-    setAudioFile(file);
+  const handleFileSelect = async (file: File) => {
+    if (!isSupportedAudioFile(file)) {
+      setAudioFileError(
+        "暂不支持这个音频格式，请选择 mp3、m4a、aac、wav、flac、ogg 或 webm。",
+      );
+      return;
+    }
+
     resetListeningSession();
 
-    void analyzeLocalAudioFeatures(file).catch((error) => {
+    const shouldTranscode =
+      getFileExtension(file.name) === ".m4a";
+
+    setIsPreparingAudio(shouldTranscode);
+
+    let playableFile = file;
+
+    try {
+      if (shouldTranscode) {
+        setAudioFileError(
+          "正在把这个 m4a 转成浏览器更稳定支持的 WAV 音频…",
+        );
+        playableFile = await transcodeAudioFile(file);
+      }
+
+      setAudioFile(playableFile);
+      setAudioFileError("");
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "音频转码失败。";
+
+      setAudioFile(null);
+      setAudioFileError(
+        `这个 m4a 当前无法转成可播放音频：${message}`,
+      );
+      return;
+    } finally {
+      setIsPreparingAudio(false);
+    }
+
+    void analyzeLocalAudioFeatures(playableFile).catch((error) => {
       console.warn("本地听感分析失败：", error);
     });
   };
@@ -733,27 +638,23 @@ export default function Home() {
     }
 
     lastRealtimeCommentSecondRef.current = currentSecond;
-    setQwenMomentStatus("commenting");
-
-    const text = createProactiveRealtimeComment(
-      playback,
-      listeningMessagesRef.current,
+    sendPromptToQwen(
+      buildQwenPrompt({
+        kind: "proactive_comment",
+        audioFile,
+        playback,
+        messages: listeningMessagesRef.current,
+        localAudioFeatures,
+      }),
     );
-
-    addCompanionMessage(text, "realtime-style");
-
-    window.setTimeout(() => {
-      setQwenMomentStatus(
-        qwenReadyRef.current ? "connected" : "idle",
-      );
-    }, 600);
   }, [
-    addCompanionMessage,
     audioFile,
     playback,
     playback.currentTime,
     playback.isPlaying,
     playback.isSeeking,
+    sendPromptToQwen,
+    localAudioFeatures,
   ]);
 
   const handleFeedbackChange = (
@@ -784,19 +685,23 @@ export default function Home() {
       musicTimeSeconds: playbackRef.current.currentTime,
     };
 
-    const nextTone = inferCompanionTone(cleanText);
-
-    if (nextTone !== "unknown") {
-      setCompanionTone(nextTone);
-    }
-
-    setListeningMessages((previousMessages) => [
-      ...previousMessages,
+    const nextMessages = [
+      ...listeningMessagesRef.current,
       newMessage,
-    ]);
+    ];
 
-    setCompanionReplyStatus("idle");
-    setCompanionReplyError("");
+    setListeningMessages(nextMessages);
+
+    sendPromptToQwen(
+      buildQwenPrompt({
+        kind: "user_reply",
+        audioFile,
+        playback: playbackRef.current,
+        messages: nextMessages,
+        localAudioFeatures,
+        userText: cleanText,
+      }),
+    );
   };
 
   return (
@@ -838,16 +743,24 @@ export default function Home() {
         <section style={styles.heroCard}>
           <p style={styles.description}>
             {!audioFile
-              ? "选择一首音乐，AI会陪你聊它的听感、情绪和变化。"
+              ? isPreparingAudio
+                ? "正在准备这个音频文件，稍等一下。"
+                : "选择一首音乐，AI会陪你聊它的听感、情绪和变化。"
               : localFeatureStatus === "analyzing"
                 ? "正在理解这首歌的听感，不影响你直接播放。"
-                : "音乐已准备好。你可以直接播放，AI会按播放时间主动短评。"}
+                : "音乐已准备好。你可以直接播放，千问会按播放时间主动短评。"}
           </p>
 
           <AudioUploader
-            disabled={false}
+            disabled={isPreparingAudio}
             onFileSelect={handleFileSelect}
           />
+
+          {audioFileError && (
+            <p style={styles.uploadError}>
+              {audioFileError}
+            </p>
+          )}
         </section>
 
         <section style={styles.realtimeCard}>
@@ -900,15 +813,22 @@ export default function Home() {
               type="button"
               style={styles.manualRealtimeButton}
               onClick={() => {
-                const text = createProactiveRealtimeComment(
-                  playbackRef.current,
-                  listeningMessagesRef.current,
-                );
+                if (!audioFile) {
+                  return;
+                }
 
-                addCompanionMessage(text, "manual-realtime-style");
+                sendPromptToQwen(
+                  buildQwenPrompt({
+                    kind: "proactive_comment",
+                    audioFile,
+                    playback: playbackRef.current,
+                    messages: listeningMessagesRef.current,
+                    localAudioFeatures,
+                  }),
+                );
               }}
             >
-              手动生成当前短评
+              请求千问短评
             </button>
           )}
         </section>
@@ -917,14 +837,6 @@ export default function Home() {
           key={`player-${trackKey}`}
           audioFile={audioFile}
           onPlaybackStateChange={setPlayback}
-        />
-
-        <CurrentComment
-          key={`current-comment-${
-            currentComment?.id ?? schedulerKey
-          }`}
-          comment={currentComment}
-          hasAudio={hasAudio}
         />
 
         <ListeningHistory
@@ -939,12 +851,12 @@ export default function Home() {
             aria-live="polite"
           >
             {companionReplyStatus === "thinking"
-              ? "AI正在理解你的这句话…"
+              ? "正在连接千问并发送 messages…"
               : companionReplyStatus === "streaming"
-                ? "AI正在回复中…"
+                ? "千问正在回复中…"
                 : companionReplyStatus === "error"
                   ? companionReplyError
-                  : "你发的话会作为听歌上下文，不再触发普通回复接口。"}
+                  : "你发的话会连同最近 messages 一起发给千问 Realtime。"}
           </div>
         )}
 
@@ -954,19 +866,8 @@ export default function Home() {
           onSend={handleUserSend}
         />
 
-        {hasAudio && activeComments.length === 0 && (
-          <button
-            type="button"
-            style={styles.demoButton}
-            onClick={handleUseDemo}
-          >
-            使用演示时间点评论
-          </button>
-        )}
-
         <footer style={styles.footer}>
-          当前版本：普通回复接口已关闭；Realtime 只保持连接状态，不再发送音乐
-          PCM，避免 1011 断连。
+          当前版本：用户消息和主动短评均通过千问 Realtime 文本事件生成。
         </footer>
       </section>
     </main>
@@ -1054,6 +955,15 @@ const styles: Record<string, CSSProperties> = {
     color: "var(--text-secondary)",
     fontSize: "14px",
     lineHeight: 1.7,
+    textAlign: "center",
+  },
+
+  uploadError: {
+    maxWidth: "440px",
+    margin: "-4px 0 0",
+    color: "#c2410c",
+    fontSize: "12px",
+    lineHeight: 1.6,
     textAlign: "center",
   },
 

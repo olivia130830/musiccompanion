@@ -17,6 +17,8 @@ export type QwenRealtimeClientOptions = {
 };
 
 const DEFAULT_PROXY_URL = "ws://localhost:8787/qwen-realtime";
+const DEFAULT_INSTRUCTIONS =
+  "你是 MusicCompanion，一个正在和用户一起听歌的中文陪伴型音乐伙伴。你需要根据用户发来的播放时间、歌曲信息和最近对话回复。回复要自然、短、像正在一起听歌的人，不要编造你实际没有听到的音频细节。";
 
 function getRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object") {
@@ -175,6 +177,58 @@ export class QwenRealtimeClient {
     );
   }
 
+  public sendTextMessage(text: string) {
+    const cleanText = text.trim();
+
+    if (!cleanText || !this.isReady()) {
+      return false;
+    }
+
+    this.sendEvent({
+      type: "conversation.item.create",
+      item: {
+        type: "message",
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: cleanText,
+          },
+        ],
+      },
+    });
+
+    this.finalText = "";
+
+    this.sendEvent({
+      type: "response.create",
+      response: {
+        modalities: ["text"],
+      },
+    });
+
+    this.options.onStatusChange?.("streaming");
+    return true;
+  }
+
+  private sendSessionUpdate() {
+    this.sendEvent({
+      type: "session.update",
+      session: {
+        modalities: ["text"],
+        instructions: DEFAULT_INSTRUCTIONS,
+      },
+    });
+  }
+
+  private sendEvent(event: unknown) {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    this.socket.send(JSON.stringify(event));
+  }
+
   private handleMessage(rawData: unknown) {
     const text =
       typeof rawData === "string" ? rawData : String(rawData);
@@ -192,8 +246,7 @@ export class QwenRealtimeClient {
     const eventType = getEventType(event);
 
     if (eventType === "proxy.connected") {
-      this.isConfigured = true;
-      this.options.onStatusChange?.("configured");
+      this.sendSessionUpdate();
       return;
     }
 
@@ -234,6 +287,7 @@ export class QwenRealtimeClient {
     if (eventType === "response.text.done") {
       const doneText = getDoneText(event) || this.finalText;
       this.options.onTextDone?.(doneText);
+      this.finalText = "";
       this.options.onStatusChange?.("configured");
       return;
     }
@@ -248,6 +302,7 @@ export class QwenRealtimeClient {
     if (eventType === "response.audio_transcript.done") {
       const doneText = getDoneText(event) || this.finalText;
       this.options.onTextDone?.(doneText);
+      this.finalText = "";
       this.options.onStatusChange?.("configured");
       return;
     }
@@ -257,6 +312,7 @@ export class QwenRealtimeClient {
         this.options.onTextDone?.(this.finalText.trim());
       }
 
+      this.finalText = "";
       this.options.onStatusChange?.("configured");
       return;
     }

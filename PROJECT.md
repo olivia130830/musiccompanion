@@ -86,7 +86,7 @@ V0 是一个完全本地化的原型，验证以下假设：
 - **语言**: TypeScript 5
 - **前端**: React 19
 - **样式**: 普通 CSS（无框架）
-- **音频**: 原生 HTML5 `<audio>` 元素
+- **音频**: Web Audio 播放，本地音频特征分析，必要时服务端转 WAV
 - **构建**: ESLint 检查，npm 脚本
 
 ## 目录结构
@@ -94,6 +94,13 @@ V0 是一个完全本地化的原型，验证以下假设：
 ```
 musiccompanion/
 ├── app/
+│   ├── api/
+│   │   ├── audio/
+│   │   │   ├── analyze/route.ts    # 音频分析接口（当前关闭）
+│   │   │   ├── transcode/route.ts  # 音频转码接口
+│   │   │   └── upload/route.ts     # Blob 上传凭证接口
+│   │   ├── companion-reply/route.ts
+│   │   └── debug/playback-time/route.ts
 │   ├── layout.tsx              # 根布局
 │   ├── page.tsx                # 主页面
 │   └── globals.css             # 全局样式
@@ -106,6 +113,18 @@ musiccompanion/
 │   └── UserReplyBox.tsx         # 用户回复输入
 ├── hooks/
 │   └── useCommentScheduler.ts   # 评论时间触发逻辑
+├── lib/
+│   ├── audio/
+│   │   ├── formats.ts           # 音频格式白名单与 MIME 推断
+│   │   ├── pcm16.ts             # PCM16 转换工具
+│   │   └── transcode.ts         # 服务端 afconvert 转码
+│   ├── qwen/
+│   │   └── realtimeClient.ts    # 浏览器端千问 Realtime client
+│   ├── gemini.ts
+│   └── validateAnalysis.ts
+├── server/
+│   └── qwen/
+│       └── realtime-proxy.mjs   # 本地千问 Realtime WebSocket 代理
 ├── types/
 │   └── music.ts                # TypeScript 类型定义
 ├── data/
