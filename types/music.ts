@@ -84,6 +84,10 @@ export interface LocalAudioFeatures {
   rms: number | null;
   averageAmplitude: number | null;
   zeroCrossingRate: number | null;
+  volumeMoments: {
+    timeSeconds: number;
+    rms: number;
+  }[];
 
   energyLabel: string;
   brightnessLabel: string;

@@ -25,6 +25,7 @@ function createEmptyFeatures(
     rms: null,
     averageAmplitude: null,
     zeroCrossingRate: null,
+    volumeMoments: [],
     energyLabel: "未知",
     brightnessLabel: "未知",
     motionLabel: "未知",
@@ -41,18 +42,18 @@ function getEnergyLabel(
   }
 
   if (rms < 0.025) {
-    return "很安静、能量很低";
+    return "整体比较轻";
   }
 
   if (rms < 0.055) {
-    return "偏安静、能量较低";
+    return "整体不算吵";
   }
 
   if (rms < 0.12) {
-    return "中等能量";
+    return "整体刚刚好";
   }
 
-  return "能量较强";
+  return "整体比较响";
 }
 
 function getBrightnessLabel(
@@ -63,14 +64,14 @@ function getBrightnessLabel(
   }
 
   if (zeroCrossingRate < 0.025) {
-    return "偏暗、偏厚";
+    return "听起来比较闷一点";
   }
 
   if (zeroCrossingRate < 0.065) {
-    return "中等亮度";
+    return "听起来比较正常";
   }
 
-  return "偏亮、颗粒感更明显";
+  return "听起来比较清、比较尖一点";
 }
 
 function getMotionLabel(
@@ -88,14 +89,14 @@ function getMotionLabel(
     zeroCrossingRate < 0.025 &&
     averageAmplitude < 0.035
   ) {
-    return "很慢、很空";
+    return "变化比较少";
   }
 
   if (zeroCrossingRate < 0.06) {
-    return "有一定流动感";
+    return "有一点起伏";
   }
 
-  return "变化较密、运动感更强";
+  return "变化比较多";
 }
 
 function getStyleHint({
@@ -113,22 +114,83 @@ function getStyleHint({
   }
 
   if (rms < 0.03 && zeroCrossingRate < 0.03) {
-    return "ambient / cinematic / quiet";
+    return "整体声音轻，变化少";
   }
 
   if (rms < 0.06 && zeroCrossingRate < 0.06) {
-    return "calm / soft / atmospheric";
+    return "整体声音偏轻，有少量起伏";
   }
 
   if (rms >= 0.12 && zeroCrossingRate >= 0.06) {
-    return "energetic / rhythmic / bright";
+    return "整体声音较满，变化较明显";
   }
 
   if (zeroCrossingRate >= 0.08) {
-    return "bright / textured / active";
+    return "局部变化较明显";
   }
 
-  return "balanced / expressive";
+  return "整体较平稳";
+}
+
+function calculateVolumeMoments({
+  samples,
+  sampleRate,
+  durationSeconds,
+}: {
+  samples: Float32Array;
+  sampleRate: number;
+  durationSeconds: number;
+}) {
+  const windowSeconds = 1;
+  const maxSeconds = Math.min(
+    Math.ceil(durationSeconds),
+    600,
+  );
+  const windowLength = Math.max(
+    1,
+    Math.floor(sampleRate * windowSeconds),
+  );
+  const moments: {
+    timeSeconds: number;
+    rms: number;
+  }[] = [];
+
+  for (
+    let second = 0;
+    second < maxSeconds;
+    second += 1
+  ) {
+    const start = second * sampleRate;
+    const end = Math.min(
+      samples.length,
+      start + windowLength,
+    );
+
+    if (start >= end) {
+      break;
+    }
+
+    let squareSum = 0;
+    let count = 0;
+
+    for (let index = start; index < end; index += 1) {
+      const sample = samples[index];
+
+      if (!Number.isFinite(sample)) {
+        continue;
+      }
+
+      squareSum += sample * sample;
+      count += 1;
+    }
+
+    moments.push({
+      timeSeconds: second,
+      rms: count > 0 ? Math.sqrt(squareSum / count) : 0,
+    });
+  }
+
+  return moments;
 }
 
 function calculateFeatures(
@@ -194,6 +256,11 @@ function calculateFeatures(
     absoluteSum / usableSamples;
   const zeroCrossingRate =
     zeroCrossings / usableSamples;
+  const volumeMoments = calculateVolumeMoments({
+    samples: firstChannel,
+    sampleRate,
+    durationSeconds,
+  });
 
   const energyLabel = getEnergyLabel(rms);
   const brightnessLabel =
@@ -210,6 +277,7 @@ function calculateFeatures(
     rms,
     averageAmplitude,
     zeroCrossingRate,
+    volumeMoments,
     energyLabel,
     brightnessLabel,
     motionLabel,
@@ -218,7 +286,7 @@ function calculateFeatures(
       zeroCrossingRate,
     }),
     analysisNote:
-      "这是浏览器本地 Web Audio 分析结果，适合判断能量、亮度、运动感和大致风格倾向；不能准确识别歌名或具体乐器。",
+      "这是浏览器本地 Web Audio 分析结果，只适合给普通陪听反应做参考；不能准确识别歌名、歌词或具体乐器。",
   };
 }
 

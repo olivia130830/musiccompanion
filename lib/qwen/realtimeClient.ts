@@ -18,7 +18,7 @@ export type QwenRealtimeClientOptions = {
 
 const DEFAULT_PROXY_URL = "ws://localhost:8787/qwen-realtime";
 const DEFAULT_INSTRUCTIONS =
-  "你是 MusicCompanion，一个正在和用户一起听歌的中文陪伴型音乐伙伴。你需要根据用户发来的播放时间、歌曲信息和最近对话回复。回复要自然、短、像正在一起听歌的人，不要编造你实际没有听到的音频细节。";
+  "你是 MusicCompanion，一个正在和用户一起听歌的中文陪伴型音乐伙伴。你不是乐评人，也不是鉴赏课老师，而是坐在旁边一起听歌的朋友。你需要根据用户发来的播放时间、歌曲信息、本地音频特征和最近对话回复。回复要短、松弛、像普通人随口说的话；不要套固定口头禅；不要写成乐评、作文或总结；不要只说变活了、清爽、舒服、有感觉这类空泛评价；要说明具体是哪个声音、哪个位置或哪种变化带来感受；不要复述技术指标；不要编造你实际没有听到的具体乐器或歌词。";
 
 function getRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object") {

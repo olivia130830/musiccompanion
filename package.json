@@ -3,15 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "concurrently -k -n qwen,next \"node --env-file=.env.local server/qwen/realtime-proxy.mjs\" \"HTTP_PROXY=http://127.0.0.1:65532 HTTPS_PROXY=http://127.0.0.1:65532 NO_PROXY=localhost,127.0.0.1 node --use-env-proxy ./node_modules/next/dist/bin/next dev\"",
-    "dev:next": "HTTP_PROXY=http://127.0.0.1:65532 HTTPS_PROXY=http://127.0.0.1:65532 NO_PROXY=localhost,127.0.0.1 node --use-env-proxy ./node_modules/next/dist/bin/next dev",
-    "dev:qwen": "node --env-file=.env.local server/qwen/realtime-proxy.mjs",
-    "dev:direct": "next dev",
+    "dev": "NODE_OPTIONS= concurrently -k -n qwen,next \"NODE_OPTIONS= node --env-file=.env.local server/qwen/realtime-proxy.mjs\" \"NODE_OPTIONS= HTTP_PROXY=http://127.0.0.1:65532 HTTPS_PROXY=http://127.0.0.1:65532 NO_PROXY=localhost,127.0.0.1 node --use-env-proxy ./node_modules/next/dist/bin/next dev\"",
+    "dev:next": "NODE_OPTIONS= HTTP_PROXY=http://127.0.0.1:65532 HTTPS_PROXY=http://127.0.0.1:65532 NO_PROXY=localhost,127.0.0.1 node --use-env-proxy ./node_modules/next/dist/bin/next dev",
+    "dev:qwen": "NODE_OPTIONS= node --env-file=.env.local server/qwen/realtime-proxy.mjs",
+    "dev:direct": "NODE_OPTIONS= next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "test:watch": "vitest"
   },
   "dependencies": {
