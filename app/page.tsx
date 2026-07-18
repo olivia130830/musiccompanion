@@ -66,6 +66,13 @@ const MIN_PROACTIVE_COMMENT_SECOND = 4;
 const SOUND_START_GRACE_SECONDS = 2;
 const AUDIBLE_RMS_THRESHOLD = 0.018;
 
+function canUseServerAudioTranscode() {
+  return (
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1"
+  );
+}
+
 function createMessageId(): string {
   if (
     typeof crypto !== "undefined" &&
@@ -933,7 +940,8 @@ export default function Home() {
     resetListeningSession();
 
     const shouldTranscode =
-      getFileExtension(file.name) === ".m4a";
+      getFileExtension(file.name) === ".m4a" &&
+      canUseServerAudioTranscode();
 
     setIsPreparingAudio(shouldTranscode);
 
