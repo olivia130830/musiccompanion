@@ -6,9 +6,14 @@ const QWEN_REALTIME_MODEL =
   process.env.QWEN_REALTIME_MODEL || "qwen3.5-omni-flash-realtime";
 const PORT = Number(process.env.QWEN_REALTIME_PROXY_PORT || 8787);
 const PATHNAME = "/qwen-realtime";
-const QWEN_REALTIME_URL = `wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=${encodeURIComponent(
-  QWEN_REALTIME_MODEL,
-)}`;
+const qwenRealtimeUrl = new URL(
+  process.env.QWEN_REALTIME_UPSTREAM_URL ||
+    "wss://dashscope.aliyuncs.com/api-ws/v1/realtime",
+);
+
+qwenRealtimeUrl.searchParams.set("model", QWEN_REALTIME_MODEL);
+
+const QWEN_REALTIME_URL = qwenRealtimeUrl.toString();
 
 if (!DASHSCOPE_API_KEY) {
   console.error("[Proxy] 缺少 DASHSCOPE_API_KEY。请检查 .env.local。");

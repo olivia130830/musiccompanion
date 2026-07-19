@@ -16,9 +16,41 @@ export type QwenRealtimeClientOptions = {
   onRawEvent?: (event: unknown) => void;
 };
 
-const DEFAULT_PROXY_URL =
-  process.env.NEXT_PUBLIC_QWEN_REALTIME_URL ||
-  "ws://localhost:8787/qwen-realtime";
+const LOCAL_PROXY_URL = "ws://localhost:8787/qwen-realtime";
+
+function getDefaultProxyUrl() {
+  const isLocalPage =
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1";
+
+  if (isLocalPage) {
+    return LOCAL_PROXY_URL;
+  }
+
+  const configuredUrl =
+    process.env.NEXT_PUBLIC_QWEN_REALTIME_URL;
+
+  if (configuredUrl) {
+    try {
+      const url = new URL(configuredUrl);
+      const isLocalUrl =
+        url.hostname === "localhost" ||
+        url.hostname === "127.0.0.1";
+      const isAliyunEndpoint =
+        url.hostname === "dashscope.aliyuncs.com" ||
+        url.hostname.endsWith(".maas.aliyuncs.com");
+
+      if (!isLocalUrl && !isAliyunEndpoint) {
+        return configuredUrl;
+      }
+    } catch {}
+  }
+
+  const protocol =
+    window.location.protocol === "https:" ? "wss:" : "ws:";
+
+  return `${protocol}//${window.location.host}/api/qwen-realtime`;
+}
 const DEFAULT_INSTRUCTIONS =
   "你是 MusicCompanion，一个正在和用户一起听歌的中文陪伴型音乐伙伴。你不是乐评人，也不是鉴赏课老师，而是坐在旁边一起听歌的朋友。你需要根据用户发来的播放时间、歌曲信息、本地音频特征和最近对话回复。回复要短、松弛、像普通人随口说的话；不要套固定口头禅；不要写成乐评、作文或总结；不要只说变活了、清爽、舒服、有感觉这类空泛评价；要说明具体是哪个声音、哪个位置或哪种变化带来感受；不要复述技术指标；不要编造你实际没有听到的具体乐器或歌词。";
 
@@ -136,7 +168,9 @@ export class QwenRealtimeClient {
 
     this.options.onStatusChange?.("connecting");
 
-    const socket = new WebSocket(this.options.url || DEFAULT_PROXY_URL);
+    const socket = new WebSocket(
+      this.options.url || getDefaultProxyUrl(),
+    );
     this.socket = socket;
 
     socket.addEventListener("open", () => {
