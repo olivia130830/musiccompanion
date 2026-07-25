@@ -5,6 +5,7 @@ import {
   useState,
 } from "react";
 
+import { calculateBandShares } from "@/lib/audio/spectrum";
 import type {
   LocalAudioFeatures,
 } from "@/types/music";
@@ -153,6 +154,8 @@ function calculateVolumeMoments({
   const moments: {
     timeSeconds: number;
     rms: number;
+    lowBassShare: number | null;
+    upperMidShare: number | null;
   }[] = [];
 
   for (
@@ -187,6 +190,12 @@ function calculateVolumeMoments({
     moments.push({
       timeSeconds: second,
       rms: count > 0 ? Math.sqrt(squareSum / count) : 0,
+      ...calculateBandShares({
+        samples,
+        sampleRate,
+        start,
+        end,
+      }),
     });
   }
 

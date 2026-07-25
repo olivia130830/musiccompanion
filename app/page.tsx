@@ -191,16 +191,10 @@ function formatLocalAudioFeatures(
     return "本地音频特征还在分析中或暂不可用。";
   }
 
-  const currentMoment =
-    getCurrentVolumeMomentText(
-      features,
-      currentTimeSeconds,
-    );
-  const nearbyMoment =
-    getNearbyVolumeMomentText(
-      features,
-      currentTimeSeconds,
-    );
+  const listeningGuard = getListeningGuardText(
+    features,
+    currentTimeSeconds,
+  );
   const soundStartSecond =
     getEstimatedSoundStartSecond(features);
 
@@ -213,17 +207,12 @@ function formatLocalAudioFeatures(
     `采样率：${
       features.sampleRate ? `${features.sampleRate} Hz` : "未知"
     }`,
-    `整体听感：${features.energyLabel}`,
-    `声音感觉：${features.brightnessLabel}`,
-    `变化感觉：${features.motionLabel}`,
-    `当前这一秒：${currentMoment}`,
-    `当前附近几秒：${nearbyMoment}`,
     `估计声音开始：${
       soundStartSecond === null
         ? "未知"
         : formatPlaybackTime(soundStartSecond)
     }`,
-    `说话参考：${features.styleHint}`,
+    `听感判断约束：${listeningGuard}`,
     `分析说明：${features.analysisNote}`,
   ].join("\n");
 }
@@ -265,107 +254,88 @@ function isAudibleAroundCurrentTime(
   );
 }
 
-function getCurrentVolumeMomentText(
+function getAverageBandShare(
+  features: LocalAudioFeatures,
+  key: "lowBassShare" | "upperMidShare",
+) {
+  const values = features.volumeMoments
+    .filter((moment) => moment.rms >= AUDIBLE_RMS_THRESHOLD)
+    .map((moment) => moment[key])
+    .filter((value): value is number => typeof value === "number");
+
+  if (!values.length) {
+    return null;
+  }
+
+  return values.reduce((sum, value) => sum + value, 0) /
+    values.length;
+}
+
+function getListeningGuardText(
   features: LocalAudioFeatures,
   currentTimeSeconds: number,
 ) {
   const moments = features.volumeMoments;
 
   if (!moments.length) {
-    return "暂时没有当前音量变化线索。";
+    return "没有频段证据，不要猜测刺耳、震耳或激情。";
   }
 
   const currentIndex = moments.findIndex(
     (moment) =>
-      moment.timeSeconds >=
-      Math.floor(currentTimeSeconds),
+      moment.timeSeconds >= Math.floor(currentTimeSeconds),
   );
   const safeIndex =
     currentIndex >= 0 ? currentIndex : moments.length - 1;
   const current = moments[safeIndex];
-  const previous =
-    safeIndex > 0 ? moments[safeIndex - 1] : null;
-
-  if (!previous) {
-    return "刚开始听，先给一句自然反应就好。";
-  }
-
-  const difference = current.rms - previous.rms;
-  const ratio =
-    previous.rms > 0.001
+  const previous = safeIndex > 0 ? moments[safeIndex - 1] : null;
+  const volumeDifference = previous
+    ? current.rms - previous.rms
+    : 0;
+  const volumeRatio =
+    previous && previous.rms > 0.001
       ? current.rms / previous.rms
-      : current.rms > 0.02
-        ? 3
-        : 1;
-
-  if (difference > 0.035 || ratio > 1.8) {
-    return "声音比前一秒明显大了。";
-  }
-
-  if (difference < -0.035 || ratio < 0.55) {
-    return "声音比前一秒明显轻了。";
-  }
-
-  if (current.rms > 0.12) {
-    return "这一秒声音比较满。";
-  }
-
-  if (current.rms < 0.025) {
-    return "这一秒声音比较轻。";
-  }
-
-  return "这一秒比较平稳。";
-}
-
-function getNearbyVolumeMomentText(
-  features: LocalAudioFeatures,
-  currentTimeSeconds: number,
-) {
-  const moments = features.volumeMoments;
-
-  if (!moments.length) {
-    return "暂时没有当前片段线索。";
-  }
-
-  const currentSecond = Math.floor(currentTimeSeconds);
-  const nearbyMoments = moments.filter(
-    (moment) =>
-      moment.timeSeconds >= currentSecond - 2 &&
-      moment.timeSeconds <= currentSecond + 2,
+      : 1;
+  const hasVolumeJump =
+    volumeDifference > 0.035 || volumeRatio > 1.8;
+  const isLoud = current.rms >= 0.1;
+  const isOpening = current.timeSeconds <= 2;
+  const averageUpperMid = getAverageBandShare(
+    features,
+    "upperMidShare",
   );
-
-  if (!nearbyMoments.length) {
-    return "当前附近没有可用的音量线索。";
-  }
-
-  const first = nearbyMoments[0];
-  const last = nearbyMoments[nearbyMoments.length - 1];
-  const maxMoment = nearbyMoments.reduce((max, item) =>
-    item.rms > max.rms ? item : max,
+  const averageLowBass = getAverageBandShare(
+    features,
+    "lowBassShare",
   );
-  const minMoment = nearbyMoments.reduce((min, item) =>
-    item.rms < min.rms ? item : min,
-  );
-  const rise = last.rms - first.rms;
-  const spread = maxMoment.rms - minMoment.rms;
+  const hasUpperMidPeak =
+    typeof current.upperMidShare === "number" &&
+    current.upperMidShare >= 0.18 &&
+    (averageUpperMid === null ||
+      current.upperMidShare >= averageUpperMid * 1.35);
+  const hasLowBassPeak =
+    typeof current.lowBassShare === "number" &&
+    current.lowBassShare >= 0.16 &&
+    (averageLowBass === null ||
+      current.lowBassShare >= averageLowBass * 1.35);
 
-  if (maxMoment.rms < AUDIBLE_RMS_THRESHOLD) {
-    return "这一小段还比较空，暂时缺少明显音乐细节。";
+  if (isLoud && hasUpperMidPeak && (!isOpening || hasVolumeJump)) {
+    return "当前较响且2–5kHz中高频明显突出，可以谨慎描述尖锐感；不要报告技术数据。";
   }
 
-  if (rise > 0.035) {
-    return "这一小段声音在往上起来。";
+  if (isLoud && hasLowBassPeak && hasVolumeJump) {
+    return "当前较响、40–120Hz低频突出且有音量冲击，可以谨慎描述低音震感；不要报告技术数据。";
   }
 
-  if (rise < -0.035) {
-    return "这一小段声音在慢慢收。";
+  if (isOpening && !hasVolumeJump && !isLoud) {
+    return "开头音量不大且没有明显落差，禁止说刺耳、震耳或有激情。";
   }
 
-  if (spread > 0.05) {
-    return "这一小段起伏比较明显。";
+  if (isLoud || hasVolumeJump) {
+    return "只有响度或音量变化，没有足够频段证据；不能据此说刺耳、震耳、激情或难听。";
   }
 
-  return "这一小段比较稳定。";
+  return "没有明显响度或频段异常；不要主动评价刺耳、震耳、激情、好听或难听。";
 }
 
 function getEarliestProactiveCommentSecond(
@@ -395,6 +365,12 @@ function getHumanReplyGuide(
     "表达参考：可以像“哇，这个咚的一声低音感觉让人心里一颤”“诶，这一句有点意思，很国风的感觉”“后面背景里那个像拨弦的声音好好听，有点像琵琶”这样，把声音、变化和感受说清楚。",
     "如果判断风格，要说出风格名称和依据；如果判断乐器感，只能用不确定表达，并说明依据来自当前听感。",
     "如果没有足够线索，就只基于声音大小、进入、停顿、重复听感这类确定能支持的内容回应。",
+    "响度和频率不是一回事：声音大只代表响，不能自动判断为刺耳、震耳、激情、好听或难听。",
+    "只有当前声音较响，并且2–5kHz中高频相对本曲平均明显突出时，才可以谨慎描述尖锐或刺耳；开头几秒没有明显音量落差且声音不大时，禁止说刺耳。",
+    "只有40–120Hz低频明显突出，同时整体音量有冲击变化时，才可以描述低音压迫或震感，不能把低频震感说成刺耳。",
+    "只有持续增强、明显节奏推动或多种声音集中进入等证据，才可以说有激情，不能只因为某一秒声音大。",
+    "好听和难听是主观感受，不能伪装成客观检测结论；表达个人感受时必须指出具体声音或变化依据，证据不足就不要下结论。",
+    "听感判断约束是内部纠错信息，不是评论主题；回复中不要报告Hz、频段占比、RMS、音量数值或检测结果。",
   ];
 
   if (kind === "user_reply") {

@@ -87,6 +87,8 @@ export interface LocalAudioFeatures {
   volumeMoments: {
     timeSeconds: number;
     rms: number;
+    lowBassShare: number | null;
+    upperMidShare: number | null;
   }[];
 
   energyLabel: string;
