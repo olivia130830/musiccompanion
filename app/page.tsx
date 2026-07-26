@@ -63,6 +63,7 @@ type PendingQwenPrompt = {
 const USER_REPLY_DELAY_MS = 2000;
 const QWEN_COMMENT_COOLDOWN_MS = 5000;
 const MIN_PROACTIVE_COMMENT_SECOND = 4;
+const FIRST_COMMENT_REQUEST_DEADLINE_SECOND = 16;
 const SOUND_START_GRACE_SECONDS = 2;
 const AUDIBLE_RMS_THRESHOLD = 0.018;
 
@@ -181,6 +182,20 @@ function createTranscodedFileName(fileName: string) {
     dotIndex > 0 ? fileName.slice(0, dotIndex) : fileName;
 
   return `${baseName}-converted.wav`;
+}
+
+function getAudioFileListeningHint(fileName: string) {
+  const normalizedFileName = fileName.toLowerCase();
+
+  if (
+    normalizedFileName.includes("倒放") ||
+    normalizedFileName.includes("反放") ||
+    normalizedFileName.includes("reverse")
+  ) {
+    return "文件名提示这段音频可能经过倒放；如果当前上下文没有冲突，可以直接反应“这个是倒放吧！”，不必展开技术解释。";
+  }
+
+  return null;
 }
 
 function formatLocalAudioFeatures(
@@ -348,9 +363,12 @@ function getEarliestProactiveCommentSecond(
     return 8;
   }
 
-  return Math.max(
-    MIN_PROACTIVE_COMMENT_SECOND,
-    soundStartSecond + SOUND_START_GRACE_SECONDS,
+  return Math.min(
+    FIRST_COMMENT_REQUEST_DEADLINE_SECOND,
+    Math.max(
+      MIN_PROACTIVE_COMMENT_SECOND,
+      soundStartSecond + SOUND_START_GRACE_SECONDS,
+    ),
   );
 }
 
@@ -376,7 +394,10 @@ function getHumanReplyGuide(
   if (kind === "user_reply") {
     return [
       ...baseGuide,
-      "用户在聊天时，先自然接住用户的话，再顺着音乐补一句感受。",
+      "用户消息是当前最高优先级：必须先直接回答用户实际问的问题，不能跳过问题另起一条无关的音乐短评；回答完整后还有必要时，才顺带补充当前听感。",
+      "如果用户问“为什么”“怎么听出来的”“哪里像”“怎么确定”或“依据是什么”，必须承接最近一条相关判断：先明确说正在解释哪个结论，再给出上下文中已有的具体声音、节奏、开头、唱腔或变化依据，最后说明它为什么让人产生这种联想。",
+      "解释判断时至少形成“具体线索 + 听感作用 + 原结论”的因果关系，例如：“你看，这个热烈的节奏，还有开头那一声，听着特别有冲劲，就很容易让人联想到东北。”可以达到这种具体程度，但不能机械照抄例句。",
+      "如果最近的判断缺少足够依据，要坦白说那只是听感联想，再说清目前真正能支持的线索；不要为了回答而编造歌词、乐器、地域或声音细节。",
     ].join("\n");
   }
 
@@ -408,6 +429,9 @@ function buildQwenPrompt({
     ? formatPlaybackTime(playback.duration)
     : "未知";
   const recentMessages = messages.slice(-10);
+  const fileListeningHint = getAudioFileListeningHint(
+    audioFile.name,
+  );
   const history =
     recentMessages.length > 0
       ? recentMessages
@@ -424,19 +448,28 @@ function buildQwenPrompt({
       : "暂无。";
   const task =
     kind === "user_reply"
-      ? `用户刚刚说：${userText ?? ""}\n请像朋友一样自然回应。`
+      ? `用户刚刚说：${userText ?? ""}\n这是一次对用户问题的直接回复，不是新的主动短评。先回答这句话本身，并结合最近对话解释依据，禁止转移话题。`
       : "现在到达新的播放时间点，请主动给一句真实的陪听短评。";
+  const replyRequirement =
+    kind === "user_reply"
+      ? "回复要求：只输出一到两句自然中文，尽量不超过60个中文字符；先把用户的问题回答清楚；不要输出列表；不要说你无法听音频。"
+      : "回复要求：只输出一句话，尽量不超过36个中文字符；像普通用户随口说的；不要输出列表；不要说你无法听音频。";
   const playbackContext = isRevisitedSegment
     ? "用户把进度拉回了之前听过的一段；可以意识到这是回听/重复听，但不要机械地说“你又回来了”，要像朋友自然发现这段还是值得再听。"
     : "这是当前正常播放到的新位置。";
 
   return [
     "你正在和用户一起听歌，请用中文回复。",
-    "回复要求：只输出一句话，尽量不超过36个中文字符；像普通用户随口说的；不要输出列表；不要说你无法听音频。",
+    replyRequirement,
     "具体度要求：不要只给形容词，必须说明“哪里/什么声音/哪种变化”让你产生这个感受。",
     "可以学习表达参考的具体程度，但不要机械照抄；你需要根据当前上下文自己组织一句新的自然评论。",
+    "生成前必须逐条对照最近你说过的话：不要重复同一个声音对象、同一种变化判断、同一个形容词或同一个比喻；例如已经说过“像拉长的泡泡”，后续就不能换几个字继续说泡泡或拉长感，应改看节奏、空间、音色、结构或情绪中的其他角度。",
+    "如果有明确线索表明音频经过倒放、变速或其他特殊处理，可以直接说“这个是倒放吧！”这类简短自然的判断，不必强行套用完整评论结构；没有线索时不要猜。",
     getHumanReplyGuide(kind),
     `歌曲文件名：${audioFile.name}`,
+    ...(fileListeningHint
+      ? [`文件线索：${fileListeningHint}`]
+      : []),
     `文件格式：${inferAudioMimeType(audioFile) || getFileExtension(audioFile.name) || "未知"}`,
     `文件大小：${formatFileSize(audioFile.size)}`,
     `当前播放：${currentTime} / ${duration}`,
@@ -498,6 +531,8 @@ export default function Home() {
   const qwenReadyRef = useRef(false);
 
   const lastRealtimeCommentSecondRef = useRef(0);
+
+  const hasRequestedProactiveCommentRef = useRef(false);
 
   const previousPlaybackSecondRef = useRef(0);
 
@@ -600,8 +635,8 @@ export default function Home() {
             id: `${commentIdPrefix}-${Date.now()}`,
             sender: "companion",
             text:
-              cleanText.length > 45
-                ? cleanText.slice(0, 45)
+              cleanText.length > 60
+                ? cleanText.slice(0, 60)
                 : cleanText,
             musicTimeSeconds,
             commentId: `${commentIdPrefix}-comment-${Date.now()}`,
@@ -861,6 +896,7 @@ export default function Home() {
     resetLocalAudioFeatures();
 
     lastRealtimeCommentSecondRef.current = 0;
+    hasRequestedProactiveCommentRef.current = false;
     previousPlaybackSecondRef.current = 0;
     furthestPlaybackSecondRef.current = 0;
     revisitedUntilSecondRef.current = 0;
@@ -1031,7 +1067,14 @@ export default function Home() {
       return;
     }
 
+    const isFirstProactiveComment =
+      !hasRequestedProactiveCommentRef.current;
+    const firstCommentDeadlineReached =
+      isFirstProactiveComment &&
+      currentSecond >= FIRST_COMMENT_REQUEST_DEADLINE_SECOND;
+
     if (
+      !firstCommentDeadlineReached &&
       !isAudibleAroundCurrentTime(
         localAudioFeatures,
         currentSecond,
@@ -1046,14 +1089,14 @@ export default function Home() {
       currentSecond <= revisitedUntilSecondRef.current;
 
     if (
+      !isFirstProactiveComment &&
       currentSecond - lastRealtimeCommentSecondRef.current <
       18
     ) {
       return;
     }
 
-    lastRealtimeCommentSecondRef.current = currentSecond;
-    schedulePromptToQwen({
+    const didSchedule = schedulePromptToQwen({
       prompt: buildQwenPrompt({
         kind: "proactive_comment",
         audioFile,
@@ -1066,6 +1109,11 @@ export default function Home() {
       musicTimeSeconds: playback.currentTime,
       replaceScheduled: false,
     });
+
+    if (didSchedule) {
+      hasRequestedProactiveCommentRef.current = true;
+      lastRealtimeCommentSecondRef.current = currentSecond;
+    }
   }, [
     audioFile,
     playback,
