@@ -1,97 +1,100 @@
 "use client";
 
-import {
-  useState,
-  type FormEvent,
-  type KeyboardEvent,
-} from "react";
+import type { VoiceRecording } from "@/hooks/useVoiceRecorder";
+
+export type VoiceInputStatus =
+  | "idle"
+  | "requesting_permission"
+  | "recording"
+  | "sending";
 
 interface UserReplyBoxProps {
   disabled: boolean;
-  onSend: (text: string) => void;
+  status: VoiceInputStatus;
+  recording: VoiceRecording | null;
+  error: string;
+  onStartRecording: () => void;
+  onStopRecording: () => void;
+  onDiscardRecording: () => void;
+}
+
+function getStatusText(disabled: boolean, status: VoiceInputStatus) {
+  if (disabled) return "先选择一首音乐";
+  if (status === "requesting_permission") return "正在请求麦克风权限…";
+  if (status === "recording") return "正在录音，再点一次停止";
+  if (status === "sending") return "正在发送给 AI…";
+  return "点一下开始录音";
 }
 
 export default function UserReplyBox({
   disabled,
-  onSend,
+  status,
+  recording,
+  error,
+  onStartRecording,
+  onStopRecording,
+  onDiscardRecording,
 }: UserReplyBoxProps) {
-  const [text, setText] = useState("");
-
-  const trimmedText = text.trim();
-  const cannotSend =
-    disabled || trimmedText.length === 0;
-
-  const sendMessage = () => {
-    if (cannotSend) {
-      return;
-    }
-
-    onSend(trimmedText);
-    setText("");
-  };
-
-  const handleSubmit = (
-    event: FormEvent<HTMLFormElement>,
-  ) => {
-    event.preventDefault();
-    sendMessage();
-  };
-
-  const handleKeyDown = (
-    event: KeyboardEvent<HTMLTextAreaElement>,
-  ) => {
-    if (
-      event.key === "Enter" &&
-      !event.shiftKey
-    ) {
-      event.preventDefault();
-      sendMessage();
-    }
-  };
+  const isRecording = status === "recording";
+  const isBusy =
+    status === "requesting_permission" || status === "sending";
 
   return (
-    <form
-      className="reply-box"
-      onSubmit={handleSubmit}
-    >
-      <label
-        className="reply-label"
-        htmlFor="listener-reply"
+    <section className="reply-box" aria-labelledby="voice-reply-label">
+      <p id="voice-reply-label" className="reply-label">
+        用语音分享你此刻的感受
+      </p>
+
+      <button
+        className={`voice-record-button${
+          isRecording ? " voice-record-button-active" : ""
+        }`}
+        type="button"
+        disabled={disabled || isBusy}
+        aria-pressed={isRecording}
+        onClick={isRecording ? onStopRecording : onStartRecording}
       >
-        分享你此刻的感受
-      </label>
+        <span aria-hidden="true">{isRecording ? "■" : "●"}</span>
+        <span>{isRecording ? "停止录音" : "开始录音"}</span>
+      </button>
 
-      <textarea
-        id="listener-reply"
-        className="reply-textarea"
-        value={text}
-        disabled={disabled}
-        placeholder={
-          disabled
-            ? "先选择一首音乐"
-            : "写下你此刻听到的感受……"
-        }
-        rows={3}
-        maxLength={300}
-        onChange={(event) =>
-          setText(event.currentTarget.value)
-        }
-        onKeyDown={handleKeyDown}
-      />
+      <p className="voice-record-status" aria-live="polite">
+        {getStatusText(disabled, status)}
+      </p>
 
-      <div className="reply-actions">
-        <span className="reply-help">
-          Enter 发送，Shift + Enter 换行
-        </span>
+      {recording && (
+        <div className="voice-recording-preview">
+          <audio controls preload="metadata" src={recording.previewUrl}>
+            当前浏览器不支持音频试听。
+          </audio>
 
-        <button
-          className="reply-send-button"
-          type="submit"
-          disabled={cannotSend}
-        >
-          发送
-        </button>
-      </div>
-    </form>
+          <div className="voice-recording-actions">
+            <a
+              className="voice-download-link"
+              href={recording.previewUrl}
+              download={recording.file.name}
+            >
+              下载录音
+            </a>
+
+            <button
+              type="button"
+              className="voice-secondary-button"
+              disabled={isBusy}
+              onClick={onDiscardRecording}
+            >
+              重录
+            </button>
+
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <p className="voice-record-error" role="alert">
+          {error}
+        </p>
+      )}
+    </section>
   );
 }

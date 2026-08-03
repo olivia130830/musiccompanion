@@ -12,16 +12,24 @@ export type QwenRealtimeClientOptions = {
   onStatusChange?: (status: QwenRealtimeStatus) => void;
   onTextDelta?: (delta: string) => void;
   onTextDone?: (text: string) => void;
+  onInputTranscriptDone?: (text: string) => void;
   onError?: (message: string) => void;
   onRawEvent?: (event: unknown) => void;
 };
 
 const LOCAL_PROXY_URL = "ws://localhost:8787/qwen-realtime";
 
-function getDefaultProxyUrl() {
+type ProxyPageLocation = Pick<
+  Location,
+  "host" | "hostname" | "port" | "protocol"
+>;
+
+export function getDefaultProxyUrl(
+  pageLocation: ProxyPageLocation = window.location,
+) {
   const isLocalPage =
-    window.location.hostname === "localhost" ||
-    window.location.hostname === "127.0.0.1";
+    pageLocation.hostname === "localhost" ||
+    pageLocation.hostname === "127.0.0.1";
 
   if (isLocalPage) {
     return LOCAL_PROXY_URL;
@@ -46,10 +54,16 @@ function getDefaultProxyUrl() {
     } catch {}
   }
 
-  const protocol =
-    window.location.protocol === "https:" ? "wss:" : "ws:";
+  if (pageLocation.port === "3000") {
+    const protocol =
+      pageLocation.protocol === "https:" ? "wss:" : "ws:";
+    return `${protocol}//${pageLocation.hostname}:8787/qwen-realtime`;
+  }
 
-  return `${protocol}//${window.location.host}/api/qwen-realtime`;
+  const protocol =
+    pageLocation.protocol === "https:" ? "wss:" : "ws:";
+
+  return `${protocol}//${pageLocation.host}/api/qwen-realtime`;
 }
 const DEFAULT_INSTRUCTIONS =
   "你是 MusicCompanion，一个正在和用户一起听歌的中文陪伴型音乐伙伴。你不是乐评人，也不是鉴赏课老师，而是坐在旁边一起听歌的朋友。你需要根据用户发来的播放时间、歌曲信息、本地音频特征和最近对话回复。回复要短、松弛、像普通人随口说的话；不要套固定口头禅；不要写成乐评、作文或总结；不要只说变活了、清爽、舒服、有感觉这类空泛评价；要说明具体是哪个声音、哪个位置或哪种变化带来感受；不要复述技术指标；不要编造你实际没有听到的具体乐器或歌词。";
@@ -247,12 +261,45 @@ export class QwenRealtimeClient {
     return true;
   }
 
-  private sendSessionUpdate() {
+  public async waitUntilReady(timeoutMs = 10000) {
+    const startedAt = Date.now();
+    while (!this.isReady()) {
+      if (Date.now() - startedAt >= timeoutMs) return false;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return true;
+  }
+
+  public sendVoiceMessage(audioBase64: string, instructions: string) {
+    if (!audioBase64 || !this.isReady()) return false;
+
+    this.sendSessionUpdate(instructions);
+    this.sendEvent({ type: "input_audio_buffer.clear" });
+    this.sendEvent({
+      type: "input_audio_buffer.append",
+      audio: audioBase64,
+    });
+    this.sendEvent({ type: "input_audio_buffer.commit" });
+    this.finalText = "";
+    this.sendEvent({
+      type: "response.create",
+      response: { modalities: ["text"] },
+    });
+    this.options.onStatusChange?.("streaming");
+    return true;
+  }
+
+  private sendSessionUpdate(instructions = DEFAULT_INSTRUCTIONS) {
     this.sendEvent({
       type: "session.update",
       session: {
         modalities: ["text"],
-        instructions: DEFAULT_INSTRUCTIONS,
+        input_audio_format: "pcm",
+        input_audio_transcription: {
+          model: "qwen3-asr-flash-realtime",
+        },
+        turn_detection: null,
+        instructions,
       },
     });
   }
@@ -304,6 +351,15 @@ export class QwenRealtimeClient {
     if (eventType === "session.updated") {
       this.isConfigured = true;
       this.options.onStatusChange?.("configured");
+      return;
+    }
+
+    if (
+      eventType ===
+      "conversation.item.input_audio_transcription.completed"
+    ) {
+      const transcript = getDoneText(event).trim();
+      if (transcript) this.options.onInputTranscriptDone?.(transcript);
       return;
     }
 

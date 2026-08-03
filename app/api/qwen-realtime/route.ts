@@ -88,21 +88,7 @@ function handleConnection(browserSocket: WebSocket) {
     const text = data.toString();
 
     try {
-      const event = JSON.parse(text) as { type?: string };
-
-      if (
-        event.type === "input_audio_buffer.append" ||
-        event.type === "input_audio_buffer.commit" ||
-        event.type === "input_audio_buffer.clear"
-      ) {
-        sendProxyEvent(browserSocket, {
-          type: "proxy.blocked_audio_event",
-          blocked_type: event.type,
-          reason:
-            "当前已禁止向 Qwen Realtime 发送音乐 PCM，避免服务端 1011 断连。",
-        });
-        return;
-      }
+      JSON.parse(text);
     } catch {
       return;
     }

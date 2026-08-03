@@ -794,79 +794,15 @@ input[type="range"]:focus-visible {
   font-weight: 400;
 }
 
-.reply-textarea {
+.voice-record-button {
   width: 100%;
-  min-height: 92px;
-
-  resize: vertical;
-
-  padding:
-    13px 14px;
-
-  border:
-    1px solid
-    var(--border-light);
-
-  border-radius: 15px;
-  outline: none;
-
-  background:
-    rgba(247, 250, 255, 0.82);
-
-  color:
-    var(--text-primary);
-
-  font-size: 14px;
-  line-height: 1.6;
-
-  transition:
-    border-color 160ms ease,
-    box-shadow 160ms ease,
-    background-color 160ms ease;
-}
-
-.reply-textarea::placeholder {
-  color:
-    var(--text-tertiary);
-}
-
-.reply-textarea:focus {
-  border-color:
-    rgba(85, 120, 237, 0.5);
-
-  background: #ffffff;
-
-  box-shadow:
-    0 0 0 4px
-    rgba(85, 120, 237, 0.1);
-}
-
-.reply-textarea:disabled {
-  cursor: not-allowed;
-  opacity: 0.52;
-}
-
-.reply-actions {
   display: flex;
   align-items: center;
-  justify-content:
-    space-between;
-
-  gap: 14px;
-}
-
-.reply-help {
-  color:
-    var(--text-tertiary);
-
-  font-size: 11px;
-}
-
-.reply-send-button {
-  flex-shrink: 0;
+  justify-content: center;
+  gap: 10px;
 
   padding:
-    9px 18px;
+    16px 20px;
 
   border-radius: 999px;
 
@@ -883,7 +819,7 @@ input[type="range"]:focus-visible {
 
   color: #ffffff;
 
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 400;
 
   transition:
@@ -891,7 +827,7 @@ input[type="range"]:focus-visible {
     box-shadow 160ms ease;
 }
 
-.reply-send-button:hover:not(:disabled) {
+.voice-record-button:hover:not(:disabled) {
   transform:
     translateY(-2px);
 
@@ -900,7 +836,7 @@ input[type="range"]:focus-visible {
     rgba(85, 120, 237, 0.28);
 }
 
-.reply-send-button:focus-visible {
+.voice-record-button:focus-visible {
   outline:
     3px solid
     rgba(85, 120, 237, 0.22);
@@ -908,8 +844,64 @@ input[type="range"]:focus-visible {
   outline-offset: 3px;
 }
 
-.reply-send-button:disabled {
+.voice-record-button:disabled,
+.voice-secondary-button:disabled {
   opacity: 0.42;
+}
+
+.voice-record-button-active {
+  background: linear-gradient(135deg, #e85f72, #d84670);
+}
+
+.voice-record-status,
+.voice-record-error {
+  margin: 0;
+  font-size: 12px;
+  text-align: center;
+}
+
+.voice-record-status {
+  color: var(--text-tertiary);
+}
+
+.voice-record-error {
+  color: #cc4d65;
+}
+
+.voice-recording-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 16px;
+  background: rgba(247, 250, 255, 0.82);
+}
+
+.voice-recording-preview audio {
+  width: 100%;
+}
+
+.voice-recording-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.voice-download-link,
+.voice-secondary-button {
+  padding: 8px 13px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.voice-download-link,
+.voice-secondary-button {
+  border: 1px solid var(--border-light);
+  background: #ffffff;
+  color: var(--text-secondary);
 }
 
 /* 手机适配 */
@@ -936,15 +928,6 @@ input[type="range"]:focus-visible {
     width: 94%;
   }
 
-  .reply-actions {
-    align-items: flex-end;
-  }
-
-  .reply-help {
-    max-width: 185px;
-
-    line-height: 1.5;
-  }
 }
 
 /* 减少动画 */

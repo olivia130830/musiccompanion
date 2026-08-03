@@ -61,7 +61,7 @@ function describeBrowserMessage(text) {
       const audioLength =
         typeof event.audio === "string" ? event.audio.length : 0;
 
-      return `[Browser -> Qwen BLOCKED] input_audio_buffer.append audioBase64Length=${audioLength}`;
+      return `[Browser -> Qwen] microphone audioBase64Length=${audioLength}`;
     }
 
     return `[Browser -> Qwen RAW] ${text}`;
@@ -164,28 +164,9 @@ wss.on("connection", (browserSocket) => {
 
     console.log(describeBrowserMessage(text));
 
-    let event = null;
-
     try {
-      event = JSON.parse(text);
+      JSON.parse(text);
     } catch {
-      return;
-    }
-
-    if (
-      event.type === "input_audio_buffer.append" ||
-      event.type === "input_audio_buffer.commit" ||
-      event.type === "input_audio_buffer.clear"
-    ) {
-      safeSend(
-        browserSocket,
-        JSON.stringify({
-          type: "proxy.blocked_audio_event",
-          blocked_type: event.type,
-          reason:
-            "当前已禁止向 Qwen Realtime 发送音乐 PCM，避免服务端 1011 断连。",
-        }),
-      );
       return;
     }
 

@@ -1,8 +1,12 @@
+import decodeWebm from "@audio/decode-webm";
+
 export type ConvertAudioFileOptions = {
   startTimeSeconds: number;
-  durationSeconds: number;
+  durationSeconds?: number;
   targetSampleRate?: number;
 };
+
+export const QWEN_INPUT_SAMPLE_RATE = 16000;
 
 function arrayBufferToBase64(buffer: ArrayBuffer) {
   const bytes = new Uint8Array(buffer);
@@ -15,7 +19,9 @@ function arrayBufferToBase64(buffer: ArrayBuffer) {
   return btoa(binary);
 }
 
-function floatTo16BitPcmBase64(samples: Float32Array<ArrayBufferLike>) {
+export function float32ToPcm16Base64(
+  samples: Float32Array<ArrayBufferLike>,
+) {
   const outputBuffer = new ArrayBuffer(samples.length * 2);
   const view = new DataView(outputBuffer);
 
@@ -30,111 +36,134 @@ function floatTo16BitPcmBase64(samples: Float32Array<ArrayBufferLike>) {
   return arrayBufferToBase64(outputBuffer);
 }
 
-function createMonoChannelBuffer(audioBuffer: AudioBuffer) {
-  const length = audioBuffer.length;
-  const channelCount = audioBuffer.numberOfChannels;
+export function resampleMonoFloat32(
+  samples: Float32Array<ArrayBufferLike>,
+  sourceSampleRate: number,
+  targetSampleRate = QWEN_INPUT_SAMPLE_RATE,
+) {
+  if (sourceSampleRate <= 0 || targetSampleRate <= 0) {
+    throw new RangeError("音频采样率必须大于 0。");
+  }
+
+  if (!samples.length) return new Float32Array();
+  if (sourceSampleRate === targetSampleRate) {
+    return new Float32Array(samples);
+  }
+
+  const targetLength = Math.max(
+    1,
+    Math.round(
+      (samples.length * targetSampleRate) / sourceSampleRate,
+    ),
+  );
+  const output = new Float32Array(targetLength);
+  const ratio = sourceSampleRate / targetSampleRate;
+
+  for (let index = 0; index < targetLength; index += 1) {
+    const sourcePosition = index * ratio;
+    const lowerIndex = Math.floor(sourcePosition);
+    const upperIndex = Math.min(
+      samples.length - 1,
+      lowerIndex + 1,
+    );
+    const fraction = sourcePosition - lowerIndex;
+
+    output[index] =
+      samples[lowerIndex] * (1 - fraction) +
+      samples[upperIndex] * fraction;
+  }
+
+  return output;
+}
+
+function mixToMono(channelData: Float32Array[]) {
+  const length = channelData[0]?.length ?? 0;
   const mono = new Float32Array(length);
 
-  for (
-    let channelIndex = 0;
-    channelIndex < channelCount;
-    channelIndex += 1
-  ) {
-    const channel = audioBuffer.getChannelData(channelIndex);
-
-    for (
-      let sampleIndex = 0;
-      sampleIndex < length;
-      sampleIndex += 1
-    ) {
-      mono[sampleIndex] += channel[sampleIndex] / channelCount;
+  for (const channel of channelData) {
+    for (let index = 0; index < length; index += 1) {
+      mono[index] += channel[index] / channelData.length;
     }
   }
 
   return mono;
 }
 
-function createAudioBufferFromMonoSamples(
-  context: BaseAudioContext,
-  samples: Float32Array<ArrayBufferLike>,
-  sampleRate: number,
-) {
-  const audioBuffer = context.createBuffer(
-    1,
-    samples.length,
-    sampleRate,
-  );
+async function decodeWithBrowser(file: File) {
+  const AudioContextConstructor =
+    window.AudioContext ??
+    (window as typeof window & {
+      webkitAudioContext?: typeof AudioContext;
+    }).webkitAudioContext;
 
-  const targetChannel = audioBuffer.getChannelData(0);
-
-  for (let index = 0; index < samples.length; index += 1) {
-    targetChannel[index] = samples[index];
+  if (!AudioContextConstructor) {
+    throw new Error("当前浏览器无法解码这种录音格式。");
   }
 
-  return audioBuffer;
+  const audioContext = new AudioContextConstructor();
+
+  try {
+    const audioBuffer = await audioContext.decodeAudioData(
+      await file.arrayBuffer(),
+    );
+    const channelData = Array.from(
+      { length: audioBuffer.numberOfChannels },
+      (_, index) => audioBuffer.getChannelData(index),
+    );
+
+    return {
+      channelData,
+      sampleRate: audioBuffer.sampleRate,
+    };
+  } finally {
+    await audioContext.close();
+  }
+}
+
+async function decodeRecordedFile(file: File) {
+  if (file.type.includes("webm")) {
+    return decodeWebm(await file.arrayBuffer());
+  }
+
+  return decodeWithBrowser(file);
 }
 
 export async function convertAudioFileSliceToPcm16Base64(
   file: File,
   options: ConvertAudioFileOptions,
 ) {
-  const targetSampleRate = options.targetSampleRate ?? 16000;
-  const audioContext = new AudioContext();
+  const decoded = await decodeRecordedFile(file);
+  const mono = mixToMono(decoded.channelData);
+  const startSample = Math.min(
+    mono.length,
+    Math.floor(
+      Math.max(0, options.startTimeSeconds) * decoded.sampleRate,
+    ),
+  );
+  const availableDuration =
+    (mono.length - startSample) / decoded.sampleRate;
+  const durationSeconds = Math.max(
+    0,
+    Math.min(
+      options.durationSeconds ?? availableDuration,
+      availableDuration,
+    ),
+  );
+  const endSample = Math.min(
+    mono.length,
+    startSample + Math.floor(durationSeconds * decoded.sampleRate),
+  );
+  const monoSlice = mono.slice(startSample, endSample);
 
-  try {
-    const sourceArrayBuffer = await file.arrayBuffer();
-    const decodedAudioBuffer =
-      await audioContext.decodeAudioData(sourceArrayBuffer.slice(0));
-
-    const sourceSampleRate = decodedAudioBuffer.sampleRate;
-    const startTimeSeconds = Math.max(0, options.startTimeSeconds);
-    const durationSeconds = Math.max(0.5, options.durationSeconds);
-
-    const safeStartSample = Math.min(
-      decodedAudioBuffer.length,
-      Math.floor(startTimeSeconds * sourceSampleRate),
-    );
-
-    const safeEndSample = Math.min(
-      decodedAudioBuffer.length,
-      safeStartSample + Math.floor(durationSeconds * sourceSampleRate),
-    );
-
-    const sliceLength = Math.max(1, safeEndSample - safeStartSample);
-    const monoSource = createMonoChannelBuffer(decodedAudioBuffer);
-    const monoSlice = monoSource.slice(
-      safeStartSample,
-      safeStartSample + sliceLength,
-    );
-
-    const sliceDurationSeconds = monoSlice.length / sourceSampleRate;
-    const targetLength = Math.max(
-      1,
-      Math.ceil(sliceDurationSeconds * targetSampleRate),
-    );
-
-    const offlineContext = new OfflineAudioContext(
-      1,
-      targetLength,
-      targetSampleRate,
-    );
-
-    const sourceBuffer = createAudioBufferFromMonoSamples(
-      offlineContext,
-      monoSlice,
-      sourceSampleRate,
-    );
-
-    const sourceNode = offlineContext.createBufferSource();
-    sourceNode.buffer = sourceBuffer;
-    sourceNode.connect(offlineContext.destination);
-    sourceNode.start(0);
-
-    const renderedBuffer = await offlineContext.startRendering();
-    const renderedSamples = renderedBuffer.getChannelData(0);
-
-    return floatTo16BitPcmBase64(renderedSamples);
-  } finally {
-    await audioContext.close();
+  if (!monoSlice.length) {
+    throw new Error("没有可转换的音频数据。");
   }
+
+  const resampled = resampleMonoFloat32(
+    monoSlice,
+    decoded.sampleRate,
+    options.targetSampleRate ?? QWEN_INPUT_SAMPLE_RATE,
+  );
+
+  return float32ToPcm16Base64(resampled);
 }
