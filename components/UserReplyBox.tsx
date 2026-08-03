@@ -6,15 +6,18 @@ export type VoiceInputStatus =
   | "idle"
   | "requesting_permission"
   | "recording"
-  | "sending";
+  | "sending"
+  | "speaking";
 
 interface UserReplyBoxProps {
   disabled: boolean;
   status: VoiceInputStatus;
   recording: VoiceRecording | null;
   error: string;
+  isPlayingReply: boolean;
   onStartRecording: () => void;
   onStopRecording: () => void;
+  onStopReply: () => void;
   onDiscardRecording: () => void;
 }
 
@@ -23,6 +26,7 @@ function getStatusText(disabled: boolean, status: VoiceInputStatus) {
   if (status === "requesting_permission") return "正在请求麦克风权限…";
   if (status === "recording") return "正在录音，再点一次停止";
   if (status === "sending") return "正在发送给 AI…";
+  if (status === "speaking") return "AI 正在播放语音回复";
   return "点一下开始录音";
 }
 
@@ -31,8 +35,10 @@ export default function UserReplyBox({
   status,
   recording,
   error,
+  isPlayingReply,
   onStartRecording,
   onStopRecording,
+  onStopReply,
   onDiscardRecording,
 }: UserReplyBoxProps) {
   const isRecording = status === "recording";
@@ -61,6 +67,16 @@ export default function UserReplyBox({
       <p className="voice-record-status" aria-live="polite">
         {getStatusText(disabled, status)}
       </p>
+
+      {isPlayingReply && (
+        <button
+          type="button"
+          className="voice-secondary-button"
+          onClick={onStopReply}
+        >
+          停止 AI 语音
+        </button>
+      )}
 
       {recording && (
         <div className="voice-recording-preview">

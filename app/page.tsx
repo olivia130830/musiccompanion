@@ -26,6 +26,7 @@ import MusicPlayer from "@/components/MusicPlayer";
 import UserReplyBox from "@/components/UserReplyBox";
 
 import { useLocalAudioFeatures } from "@/hooks/useLocalAudioFeatures";
+import { usePcmAudioPlayer } from "@/hooks/usePcmAudioPlayer";
 import {
   useVoiceRecorder,
   type VoiceRecording,
@@ -593,6 +594,15 @@ export default function Home() {
     clearRecording,
   } = useVoiceRecorder();
 
+  const {
+    isPlaying: isPlayingReply,
+    prepare: prepareReplyAudio,
+    begin: beginReplyAudio,
+    append: appendReplyAudio,
+    finish: finishReplyAudio,
+    stop: stopReplyAudio,
+  } = usePcmAudioPlayer();
+
   const trackKey = useMemo(() => {
     if (!audioFile) {
       return "no-track";
@@ -776,6 +786,12 @@ export default function Home() {
 
       onInputTranscriptDone: addVoiceTranscript,
 
+      onAudioStart: beginReplyAudio,
+
+      onAudioDelta: appendReplyAudio,
+
+      onAudioDone: finishReplyAudio,
+
       onError: (message) => {
         setQwenRealtimeError(message);
         setCompanionReplyStatus("error");
@@ -799,9 +815,17 @@ export default function Home() {
     client.connect();
 
     return client;
-  }, [addCompanionMessage, addVoiceTranscript, clearRecording]);
+  }, [
+    addCompanionMessage,
+    addVoiceTranscript,
+    appendReplyAudio,
+    beginReplyAudio,
+    clearRecording,
+    finishReplyAudio,
+  ]);
 
   const disconnectQwenRealtime = useCallback(() => {
+    stopReplyAudio();
     qwenClientRef.current?.disconnect();
     qwenClientRef.current = null;
     qwenReadyRef.current = false;
@@ -810,7 +834,7 @@ export default function Home() {
     qwenResponseMusicTimeRef.current = null;
     setQwenMomentStatus("idle");
     setQwenRealtimeStatus("closed");
-  }, []);
+  }, [stopReplyAudio]);
 
   const sendPromptToQwen = useCallback(
     ({
@@ -942,6 +966,7 @@ export default function Home() {
     setQwenMomentStatus("idle");
     setIsSendingVoice(false);
     setVoiceInputError("");
+    stopReplyAudio();
     clearRecording();
     resetLocalAudioFeatures();
 
@@ -955,7 +980,7 @@ export default function Home() {
     qwenResponseMusicTimeRef.current = null;
     voiceInputMusicTimeRef.current = null;
     voiceTurnActiveRef.current = false;
-  }, [clearRecording, resetLocalAudioFeatures]);
+  }, [clearRecording, resetLocalAudioFeatures, stopReplyAudio]);
 
   const transcodeAudioFile = async (file: File) => {
     const formData = new FormData();
@@ -1201,6 +1226,7 @@ export default function Home() {
   const handleVoiceStart = async () => {
     if (!audioFile) return;
 
+    stopReplyAudio();
     cancelScheduledProactiveComment();
     setVoiceInputError("");
     voiceTurnActiveRef.current = true;
@@ -1208,6 +1234,7 @@ export default function Home() {
     connectQwenRealtime();
 
     try {
+      await prepareReplyAudio();
       const started = await startRecording();
       if (!started) voiceTurnActiveRef.current = false;
     } catch (unknownError) {
@@ -1462,15 +1489,23 @@ export default function Home() {
         <UserReplyBox
           key={`reply-box-${trackKey}`}
           disabled={!audioFile}
-          status={isSendingVoice ? "sending" : voiceRecorderStatus}
+          status={
+            isPlayingReply
+              ? "speaking"
+              : isSendingVoice
+                ? "sending"
+                : voiceRecorderStatus
+          }
           recording={voiceRecording}
           error={voiceInputError || voiceRecorderError}
+          isPlayingReply={isPlayingReply}
           onStartRecording={() => {
             void handleVoiceStart();
           }}
           onStopRecording={() => {
             void handleVoiceStop();
           }}
+          onStopReply={stopReplyAudio}
           onDiscardRecording={() => {
             clearRecording();
             voiceTurnActiveRef.current = false;

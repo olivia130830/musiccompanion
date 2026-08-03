@@ -12,6 +12,9 @@ export type QwenRealtimeClientOptions = {
   onStatusChange?: (status: QwenRealtimeStatus) => void;
   onTextDelta?: (delta: string) => void;
   onTextDone?: (text: string) => void;
+  onAudioStart?: () => void;
+  onAudioDelta?: (audioBase64: string) => void;
+  onAudioDone?: () => void;
   onInputTranscriptDone?: (text: string) => void;
   onError?: (message: string) => void;
   onRawEvent?: (event: unknown) => void;
@@ -283,7 +286,7 @@ export class QwenRealtimeClient {
     this.finalText = "";
     this.sendEvent({
       type: "response.create",
-      response: { modalities: ["text"] },
+      response: { modalities: ["text", "audio"] },
     });
     this.options.onStatusChange?.("streaming");
     return true;
@@ -293,8 +296,10 @@ export class QwenRealtimeClient {
     this.sendEvent({
       type: "session.update",
       session: {
-        modalities: ["text"],
+        modalities: ["text", "audio"],
+        voice: "Tina",
         input_audio_format: "pcm",
+        output_audio_format: "pcm",
         input_audio_transcription: {
           model: "qwen3-asr-flash-realtime",
         },
@@ -365,6 +370,7 @@ export class QwenRealtimeClient {
 
     if (eventType === "response.created") {
       this.finalText = "";
+      this.options.onAudioStart?.();
       this.options.onStatusChange?.("streaming");
       return;
     }
@@ -396,6 +402,17 @@ export class QwenRealtimeClient {
       this.options.onTextDone?.(doneText);
       this.finalText = "";
       this.options.onStatusChange?.("configured");
+      return;
+    }
+
+    if (eventType === "response.audio.delta") {
+      const audioBase64 = getDeltaText(event);
+      if (audioBase64) this.options.onAudioDelta?.(audioBase64);
+      return;
+    }
+
+    if (eventType === "response.audio.done") {
+      this.options.onAudioDone?.();
       return;
     }
 
