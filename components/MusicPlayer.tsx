@@ -3,10 +3,12 @@
 import {
   useCallback,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
+  type Ref,
 } from "react";
 
 import type { PlaybackSnapshot } from "@/types/music";
@@ -18,6 +20,14 @@ import {
 type MusicPlayerProps = {
   audioFile: File | null;
   onPlaybackStateChange: (snapshot: PlaybackSnapshot) => void;
+  onPlaybackIntent?: () => void;
+  suspendForVoiceRecording?: boolean;
+  playerRef?: Ref<MusicPlayerHandle>;
+};
+
+export type MusicPlayerHandle = {
+  pauseForVoiceRecording: () => void;
+  resumeAfterVoiceRecording: () => void;
 };
 
 const INITIAL_PLAYBACK: PlaybackSnapshot = {
@@ -54,6 +64,9 @@ function getAudioContextClass() {
 export default function MusicPlayer({
   audioFile,
   onPlaybackStateChange,
+  onPlaybackIntent,
+  suspendForVoiceRecording = false,
+  playerRef,
 }: MusicPlayerProps) {
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioBufferRef = useRef<AudioBuffer | null>(null);
@@ -63,6 +76,7 @@ export default function MusicPlayer({
   const playRequestIdRef = useRef(0);
   const startedAtRef = useRef(0);
   const pausedAtRef = useRef(0);
+  const resumeAfterVoiceRecordingRef = useRef(false);
   const playbackRef =
     useRef<PlaybackSnapshot>(INITIAL_PLAYBACK);
 
@@ -267,9 +281,45 @@ export default function MusicPlayer({
     ],
   );
 
+  const pauseForVoiceRecording = useCallback(() => {
+    if (!playbackRef.current.isPlaying) return;
+
+    resumeAfterVoiceRecordingRef.current = true;
+    pausePlayback();
+  }, [pausePlayback]);
+
+  const resumeAfterVoiceRecording = useCallback(() => {
+    if (!resumeAfterVoiceRecordingRef.current) return;
+
+    resumeAfterVoiceRecordingRef.current = false;
+    void playFrom(pausedAtRef.current);
+  }, [playFrom]);
+
+  useImperativeHandle(
+    playerRef,
+    () => ({
+      pauseForVoiceRecording,
+      resumeAfterVoiceRecording,
+    }),
+    [pauseForVoiceRecording, resumeAfterVoiceRecording],
+  );
+
   useEffect(() => {
     playbackRef.current = playback;
   }, [playback]);
+
+  useEffect(() => {
+    if (suspendForVoiceRecording) {
+      pauseForVoiceRecording();
+      return;
+    }
+
+    resumeAfterVoiceRecording();
+  }, [
+    pauseForVoiceRecording,
+    resumeAfterVoiceRecording,
+    suspendForVoiceRecording,
+  ]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -385,6 +435,7 @@ export default function MusicPlayer({
       return;
     }
 
+    onPlaybackIntent?.();
     void playFrom(pausedAtRef.current);
   };
 
@@ -444,7 +495,11 @@ export default function MusicPlayer({
           type="button"
           style={styles.playButton}
           onClick={handlePlayPause}
-          disabled={isDecoding || !hasDecodedAudio}
+          disabled={
+            isDecoding ||
+            !hasDecodedAudio ||
+            suspendForVoiceRecording
+          }
           aria-label={playback.isPlaying ? "暂停" : "播放"}
         >
           {playback.isPlaying ? "II" : "▶"}
@@ -469,6 +524,12 @@ export default function MusicPlayer({
           style={styles.progress}
         />
       </div>
+
+      {suspendForVoiceRecording && (
+        <p style={styles.emptyText}>
+          录音期间已自动暂停音乐，避免录入系统播放声。
+        </p>
+      )}
 
       {isDecoding && (
         <p style={styles.emptyText}>正在解码音频…</p>

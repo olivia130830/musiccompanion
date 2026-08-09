@@ -50,12 +50,69 @@ function getErrorMessage(error: unknown) {
   return error.message || "无法使用麦克风。";
 }
 
+export type VoiceAudioConstraints = MediaTrackConstraints & {
+  voiceIsolation?: ConstrainBoolean;
+  suppressLocalAudioPlayback?: ConstrainBoolean;
+};
+
+export type VoiceSupportedConstraints =
+  MediaTrackSupportedConstraints & {
+    voiceIsolation?: boolean;
+    suppressLocalAudioPlayback?: boolean;
+  };
+
+const SYSTEM_AUDIO_INPUT_PATTERN =
+  /blackhole|soundflower|loopback|vb[ -]?audio|cable (input|output)|stereo mix|what u hear|system audio|system sound|screen capture|aggregate device|系统音频|系统声音|立体声混音|聚合设备/i;
+
+const MICROPHONE_PREFERENCE_PATTERN =
+  /microphone|mic\b|麦克风|话筒|内建|内置|built[ -]?in|macbook/i;
+
+export function isLikelySystemAudioInput(label: string) {
+  return SYSTEM_AUDIO_INPUT_PATTERN.test(label.trim());
+}
+
+export function choosePreferredMicrophone(
+  devices: Pick<MediaDeviceInfo, "deviceId" | "kind" | "label">[],
+) {
+  const physicalInputs = devices.filter(
+    (device) =>
+      device.kind === "audioinput" &&
+      device.deviceId &&
+      !isLikelySystemAudioInput(device.label),
+  );
+
+  return (
+    physicalInputs.find((device) =>
+      MICROPHONE_PREFERENCE_PATTERN.test(device.label),
+    ) ?? physicalInputs[0] ?? null
+  );
+}
+
+export function getVoiceAudioConstraints(
+  supportedConstraints: VoiceSupportedConstraints,
+): VoiceAudioConstraints {
+  return {
+    channelCount: 1,
+    sampleRate: { ideal: 16000 },
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    ...(supportedConstraints.voiceIsolation
+      ? { voiceIsolation: true }
+      : {}),
+    ...(supportedConstraints.suppressLocalAudioPlayback
+      ? { suppressLocalAudioPlayback: true }
+      : {}),
+  };
+}
+
 export function useVoiceRecorder() {
   const [status, setStatus] =
     useState<VoiceRecorderStatus>("idle");
   const [recording, setRecording] =
     useState<VoiceRecording | null>(null);
   const [error, setError] = useState("");
+  const [inputDeviceLabel, setInputDeviceLabel] = useState("");
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -97,14 +154,44 @@ export function useVoiceRecorder() {
     clearRecording();
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
+      const constraints = getVoiceAudioConstraints(
+        navigator.mediaDevices.getSupportedConstraints(),
+      );
+      let stream = await navigator.mediaDevices.getUserMedia({
+        audio: constraints,
       });
+      let audioTrack = stream.getAudioTracks()[0];
+
+      if (
+        audioTrack &&
+        isLikelySystemAudioInput(audioTrack.label)
+      ) {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const microphone = choosePreferredMicrophone(devices);
+
+        if (!microphone) {
+          stream.getTracks().forEach((track) => track.stop());
+          throw new Error(
+            `当前输入设备“${audioTrack.label}”是系统音频回环，没有找到实体麦克风。请在浏览器或系统声音设置中选择麦克风。`,
+          );
+        }
+
+        stream.getTracks().forEach((track) => track.stop());
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            ...constraints,
+            deviceId: { exact: microphone.deviceId },
+          },
+        });
+        audioTrack = stream.getAudioTracks()[0];
+      }
+
+      if (!audioTrack) {
+        stream.getTracks().forEach((track) => track.stop());
+        throw new Error("没有获得可用的麦克风音轨。");
+      }
+
+      setInputDeviceLabel(audioTrack.label || "默认麦克风");
       const recorder = new MediaRecorder(stream, getRecorderOptions());
 
       streamRef.current = stream;
@@ -189,6 +276,7 @@ export function useVoiceRecorder() {
     status,
     recording,
     error,
+    inputDeviceLabel,
     startRecording,
     stopRecording,
     clearRecording,

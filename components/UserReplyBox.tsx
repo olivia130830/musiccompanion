@@ -14,6 +14,7 @@ interface UserReplyBoxProps {
   status: VoiceInputStatus;
   recording: VoiceRecording | null;
   error: string;
+  inputDeviceLabel?: string;
   isPlayingReply: boolean;
   onStartRecording: () => void;
   onStopRecording: () => void;
@@ -35,6 +36,7 @@ export default function UserReplyBox({
   status,
   recording,
   error,
+  inputDeviceLabel,
   isPlayingReply,
   onStartRecording,
   onStopRecording,
@@ -67,6 +69,12 @@ export default function UserReplyBox({
       <p className="voice-record-status" aria-live="polite">
         {getStatusText(disabled, status)}
       </p>
+
+      {inputDeviceLabel && (
+        <p className="voice-record-status">
+          当前麦克风：{inputDeviceLabel}
+        </p>
+      )}
 
       {isPlayingReply && (
         <button

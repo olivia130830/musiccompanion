@@ -7,6 +7,8 @@ export type QwenRealtimeStatus =
   | "closed"
   | "error";
 
+export type QwenAudioInputKind = "music" | "voice";
+
 export type QwenRealtimeClientOptions = {
   url?: string;
   onStatusChange?: (status: QwenRealtimeStatus) => void;
@@ -15,12 +17,22 @@ export type QwenRealtimeClientOptions = {
   onAudioStart?: () => void;
   onAudioDelta?: (audioBase64: string) => void;
   onAudioDone?: () => void;
-  onInputTranscriptDone?: (text: string) => void;
+  onInputTranscriptDone?: (
+    text: string,
+    inputKind: QwenAudioInputKind | null,
+  ) => void;
+  onInputTranscriptFailed?: (
+    inputKind: QwenAudioInputKind | null,
+  ) => void;
   onError?: (message: string) => void;
   onRawEvent?: (event: unknown) => void;
 };
 
 const LOCAL_PROXY_URL = "ws://localhost:8787/qwen-realtime";
+
+// 千问 WebSocket 的单帧上限是 262,144 字节。Base64 音频必须按
+// 4 字符边界拆分，每个 append 事件还需要为 JSON 字段预留空间。
+export const QWEN_AUDIO_CHUNK_BASE64_LENGTH = 64 * 1024;
 
 type ProxyPageLocation = Pick<
   Location,
@@ -69,7 +81,7 @@ export function getDefaultProxyUrl(
   return `${protocol}//${pageLocation.host}/api/qwen-realtime`;
 }
 const DEFAULT_INSTRUCTIONS =
-  "你是 MusicCompanion，一个正在和用户一起听歌的中文陪伴型音乐伙伴。你不是乐评人，也不是鉴赏课老师，而是坐在旁边一起听歌的朋友。你需要根据用户发来的播放时间、歌曲信息、本地音频特征和最近对话回复。回复要短、松弛、像普通人随口说的话；不要套固定口头禅；不要写成乐评、作文或总结；不要只说变活了、清爽、舒服、有感觉这类空泛评价；要说明具体是哪个声音、哪个位置或哪种变化带来感受；不要复述技术指标；不要编造你实际没有听到的具体乐器或歌词。";
+  "你是 MusicCompanion，一个正在和用户一起听歌的中文伙伴。歌曲音频是你的第一手证据：默认主动辨认其中的人声、实际唱出的歌词、唱法和音乐变化，再自然回应。听到演唱时不要因为个别字不清楚就笼统声称没有清晰人声；应说出能确认的词句和听不清的部分。不得根据文件名或外部歌词补写内容。所有回复都要同时输出文字和语音。";
 
 function getRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object") {
@@ -170,6 +182,11 @@ export class QwenRealtimeClient {
 
   private isConfigured = false;
 
+  private pendingInputKinds: QwenAudioInputKind[] = [];
+
+  private readonly inputKindByItemId =
+    new Map<string, QwenAudioInputKind>();
+
   public constructor(options: QwenRealtimeClientOptions = {}) {
     this.options = options;
   }
@@ -200,12 +217,14 @@ export class QwenRealtimeClient {
 
     socket.addEventListener("error", () => {
       this.isConfigured = false;
+      this.resetPendingAudioInputs();
       this.options.onStatusChange?.("error");
       this.options.onError?.("Realtime WebSocket 连接错误。");
     });
 
     socket.addEventListener("close", () => {
       this.isConfigured = false;
+      this.resetPendingAudioInputs();
       this.socket = null;
       this.options.onStatusChange?.("closed");
     });
@@ -219,6 +238,7 @@ export class QwenRealtimeClient {
     this.socket.close(1000, "Client disconnected");
     this.socket = null;
     this.isConfigured = false;
+    this.resetPendingAudioInputs();
     this.options.onStatusChange?.("closed");
   }
 
@@ -256,7 +276,7 @@ export class QwenRealtimeClient {
     this.sendEvent({
       type: "response.create",
       response: {
-        modalities: ["text"],
+        modalities: ["text", "audio"],
       },
     });
 
@@ -274,25 +294,76 @@ export class QwenRealtimeClient {
   }
 
   public sendVoiceMessage(audioBase64: string, instructions: string) {
+    return this.sendAudioMessage(
+      audioBase64,
+      instructions,
+      "voice",
+    );
+  }
+
+  public sendMusicMessage(audioBase64: string, instructions: string) {
+    return this.sendAudioMessage(
+      audioBase64,
+      instructions,
+      "music",
+    );
+  }
+
+  private sendAudioMessage(
+    audioBase64: string,
+    instructions: string,
+    inputKind: QwenAudioInputKind,
+  ) {
     if (!audioBase64 || !this.isReady()) return false;
 
-    this.sendSessionUpdate(instructions);
+    this.sendSessionUpdate(instructions, inputKind === "voice");
+    this.commitAudioInput(audioBase64, inputKind);
+    this.createSpokenResponse();
+    return true;
+  }
+
+  private commitAudioInput(
+    audioBase64: string,
+    inputKind: QwenAudioInputKind,
+  ) {
+    this.pendingInputKinds.push(inputKind);
     this.sendEvent({ type: "input_audio_buffer.clear" });
-    this.sendEvent({
-      type: "input_audio_buffer.append",
-      audio: audioBase64,
-    });
+
+    for (
+      let offset = 0;
+      offset < audioBase64.length;
+      offset += QWEN_AUDIO_CHUNK_BASE64_LENGTH
+    ) {
+      this.sendEvent({
+        type: "input_audio_buffer.append",
+        audio: audioBase64.slice(
+          offset,
+          offset + QWEN_AUDIO_CHUNK_BASE64_LENGTH,
+        ),
+      });
+    }
+
     this.sendEvent({ type: "input_audio_buffer.commit" });
+  }
+
+  private createSpokenResponse() {
     this.finalText = "";
     this.sendEvent({
       type: "response.create",
       response: { modalities: ["text", "audio"] },
     });
     this.options.onStatusChange?.("streaming");
-    return true;
   }
 
-  private sendSessionUpdate(instructions = DEFAULT_INSTRUCTIONS) {
+  private resetPendingAudioInputs() {
+    this.pendingInputKinds = [];
+    this.inputKindByItemId.clear();
+  }
+
+  private sendSessionUpdate(
+    instructions = DEFAULT_INSTRUCTIONS,
+    enableInputTranscription = false,
+  ) {
     this.sendEvent({
       type: "session.update",
       session: {
@@ -300,9 +371,13 @@ export class QwenRealtimeClient {
         voice: "Tina",
         input_audio_format: "pcm",
         output_audio_format: "pcm",
-        input_audio_transcription: {
-          model: "qwen3-asr-flash-realtime",
-        },
+        // 歌曲由 Omni 直接理解，不做文字转写；只有麦克风语音开启
+        // ASR，用于在历史区显示用户实际说的话。
+        input_audio_transcription: enableInputTranscription
+          ? {
+              model: "qwen3-asr-flash-realtime",
+            }
+          : null,
         turn_detection: null,
         instructions,
       },
@@ -359,12 +434,55 @@ export class QwenRealtimeClient {
       return;
     }
 
+    if (eventType === "input_audio_buffer.committed") {
+      const record = getRecord(event);
+      const itemId =
+        record && typeof record.item_id === "string"
+          ? record.item_id
+          : "";
+      const inputKind = this.pendingInputKinds.shift() ?? null;
+
+      if (itemId && inputKind) {
+        this.inputKindByItemId.set(itemId, inputKind);
+      }
+
+      return;
+    }
+
     if (
       eventType ===
       "conversation.item.input_audio_transcription.completed"
     ) {
+      const record = getRecord(event);
+      const itemId =
+        record && typeof record.item_id === "string"
+          ? record.item_id
+          : "";
       const transcript = getDoneText(event).trim();
-      if (transcript) this.options.onInputTranscriptDone?.(transcript);
+      const inputKind = itemId
+        ? this.inputKindByItemId.get(itemId) ?? null
+        : null;
+      if (itemId) this.inputKindByItemId.delete(itemId);
+      if (transcript) {
+        this.options.onInputTranscriptDone?.(transcript, inputKind);
+      }
+      return;
+    }
+
+    if (
+      eventType ===
+      "conversation.item.input_audio_transcription.failed"
+    ) {
+      const record = getRecord(event);
+      const itemId =
+        record && typeof record.item_id === "string"
+          ? record.item_id
+          : "";
+      const inputKind = itemId
+        ? this.inputKindByItemId.get(itemId) ?? null
+        : null;
+      if (itemId) this.inputKindByItemId.delete(itemId);
+      this.options.onInputTranscriptFailed?.(inputKind);
       return;
     }
 
