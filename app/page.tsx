@@ -35,7 +35,6 @@ import {
 } from "@/hooks/useVoiceRecorder";
 
 import type {
-  CommentFeedback,
   LocalAudioFeatures,
   ListeningMessage,
   PlaybackSnapshot,
@@ -512,9 +511,6 @@ export default function Home() {
   const [listeningMessages, setListeningMessages] =
     useState<ListeningMessage[]>([]);
 
-  const [feedbackByCommentId, setFeedbackByCommentId] =
-    useState<Record<string, CommentFeedback>>({});
-
   const [companionReplyStatus, setCompanionReplyStatus] =
     useState<CompanionReplyStatus>("idle");
 
@@ -598,7 +594,6 @@ export default function Home() {
 
   const {
     status: voiceRecorderStatus,
-    recording: voiceRecording,
     error: voiceRecorderError,
     inputDeviceLabel,
     startRecording,
@@ -1013,7 +1008,6 @@ export default function Home() {
 
     setPlayback(INITIAL_PLAYBACK);
     setListeningMessages([]);
-    setFeedbackByCommentId({});
     setCompanionReplyStatus("idle");
     setCompanionReplyError("");
     setQwenRealtimeError("");
@@ -1268,16 +1262,6 @@ export default function Home() {
     schedulePromptToQwen,
     localAudioFeatures,
   ]);
-
-  const handleFeedbackChange = (
-    commentId: string,
-    feedback: CommentFeedback,
-  ) => {
-    setFeedbackByCommentId((previousFeedback) => ({
-      ...previousFeedback,
-      [commentId]: feedback,
-    }));
-  };
 
   const handleVoiceStart = async () => {
     if (!audioFile) return;
@@ -1537,11 +1521,7 @@ export default function Home() {
           }
         />
 
-        <ListeningHistory
-          messages={listeningMessages}
-          feedbackByCommentId={feedbackByCommentId}
-          onFeedbackChange={handleFeedbackChange}
-        />
+        <ListeningHistory messages={listeningMessages} />
 
         {hasAudio && (
           <div
@@ -1568,7 +1548,6 @@ export default function Home() {
                 ? "sending"
                 : voiceRecorderStatus
           }
-          recording={voiceRecording}
           error={voiceInputError || voiceRecorderError}
           inputDeviceLabel={inputDeviceLabel}
           isPlayingReply={isPlayingReply}
@@ -1579,11 +1558,6 @@ export default function Home() {
             void handleVoiceStop();
           }}
           onStopReply={stopReplyAudio}
-          onDiscardRecording={() => {
-            clearRecording();
-            voiceTurnActiveRef.current = false;
-            setVoiceInputError("");
-          }}
         />
 
         <footer style={styles.footer}>

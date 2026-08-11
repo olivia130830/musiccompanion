@@ -904,6 +904,226 @@ input[type="range"]:focus-visible {
   color: var(--text-secondary);
 }
 
+/* 语音通话式交互 */
+
+.voice-turns,
+.voice-call-box {
+  width: 100%;
+  max-width: 560px;
+  border: 1px solid var(--border-light);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.7);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+
+.voice-turns {
+  padding: 22px;
+}
+
+.voice-turns-header,
+.voice-turn-meta,
+.voice-call-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.voice-turns-header {
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.voice-turns-eyebrow {
+  margin-bottom: 4px;
+  color: var(--accent);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+.voice-turns-title {
+  font-size: 18px;
+  font-weight: 400;
+}
+
+.voice-turns-count,
+.voice-turn-meta,
+.voice-turns-empty {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.voice-turns-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 26px 12px 18px;
+  text-align: center;
+}
+
+.voice-turns-empty-orb {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #8bc7ff, #9b7cf0);
+  box-shadow: 0 0 0 10px rgba(108, 145, 239, 0.08);
+}
+
+.voice-turns-list {
+  max-height: 330px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  padding: 2px;
+}
+
+.voice-turn {
+  width: min(78%, 360px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.voice-turn-ai {
+  align-self: flex-start;
+}
+
+.voice-turn-user {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+}
+
+.voice-turn-avatar {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #f0f5ff;
+  color: var(--accent-strong);
+  font-size: 10px;
+}
+
+.voice-turn-user .voice-turn-avatar {
+  background: linear-gradient(135deg, var(--accent), var(--accent-purple));
+  color: #fff;
+}
+
+.voice-turn-body {
+  min-width: 0;
+  flex: 1;
+  padding: 11px 14px;
+  border: 1px solid var(--border-light);
+  border-radius: 18px;
+  background: rgba(247, 250, 255, 0.9);
+}
+
+.voice-turn-user .voice-turn-body {
+  background: rgba(89, 122, 237, 0.09);
+}
+
+.voice-turn-meta {
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.voice-turn-wave {
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.voice-turn-wave span {
+  width: 3px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #78baf6, #8a7deb);
+  opacity: 0.72;
+}
+
+.voice-turn-user .voice-turn-wave {
+  justify-content: flex-end;
+}
+
+.voice-call-box {
+  align-items: center;
+  gap: 14px;
+  padding: 26px 22px;
+}
+
+.voice-call-heading {
+  justify-content: center;
+  gap: 8px;
+}
+
+.voice-call-presence {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #aab2c1;
+}
+
+.voice-call-presence-active {
+  background: #61c99c;
+  box-shadow: 0 0 0 5px rgba(97, 201, 156, 0.12);
+}
+
+.voice-call-stage {
+  position: relative;
+  width: 128px;
+  height: 128px;
+  display: grid;
+  place-items: center;
+}
+
+.voice-call-ring {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(92, 126, 238, 0.08);
+}
+
+.voice-call-ring-one {
+  inset: 12px;
+}
+
+.voice-call-ring-two {
+  inset: 0;
+  opacity: 0.55;
+}
+
+.voice-call-stage-listening .voice-call-ring,
+.voice-call-stage-speaking .voice-call-ring {
+  animation: voice-call-pulse 1.6s ease-in-out infinite;
+}
+
+.voice-call-stage .voice-record-button {
+  z-index: 1;
+  width: 72px;
+  height: 72px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.voice-mic-icon {
+  font-size: 16px;
+}
+
+@keyframes voice-call-pulse {
+  0%, 100% { transform: scale(0.88); opacity: 0.4; }
+  50% { transform: scale(1); opacity: 0.9; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-call-stage-listening .voice-call-ring,
+  .voice-call-stage-speaking .voice-call-ring {
+    animation: none;
+  }
+}
+
 /* 手机适配 */
 
 @media (max-width: 600px) {
@@ -926,6 +1146,15 @@ input[type="range"]:focus-visible {
 
   .history-message {
     width: 94%;
+  }
+
+  .voice-turns,
+  .voice-call-box {
+    border-radius: 22px;
+  }
+
+  .voice-turn {
+    width: 90%;
   }
 
 }
