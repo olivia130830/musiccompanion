@@ -603,6 +603,8 @@ export default function Home() {
 
   const {
     isPlaying: isPlayingReply,
+    volume: aiReplyVolume,
+    setVolume: setAiReplyVolume,
     prepare: prepareReplyAudio,
     begin: beginReplyAudio,
     append: appendReplyAudio,
@@ -1551,6 +1553,7 @@ export default function Home() {
           error={voiceInputError || voiceRecorderError}
           inputDeviceLabel={inputDeviceLabel}
           isPlayingReply={isPlayingReply}
+          aiVolume={aiReplyVolume}
           onStartRecording={() => {
             void handleVoiceStart();
           }}
@@ -1558,6 +1561,7 @@ export default function Home() {
             void handleVoiceStop();
           }}
           onStopReply={stopReplyAudio}
+          onAiVolumeChange={setAiReplyVolume}
         />
 
         <footer style={styles.footer}>

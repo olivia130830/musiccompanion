@@ -1,5 +1,7 @@
 "use client";
 
+import type { CSSProperties } from "react";
+
 export type VoiceInputStatus =
   | "idle"
   | "requesting_permission"
@@ -13,9 +15,11 @@ interface UserReplyBoxProps {
   error: string;
   inputDeviceLabel?: string;
   isPlayingReply: boolean;
+  aiVolume: number;
   onStartRecording: () => void;
   onStopRecording: () => void;
   onStopReply: () => void;
+  onAiVolumeChange: (volume: number) => void;
 }
 
 function getStatusText(disabled: boolean, status: VoiceInputStatus) {
@@ -33,9 +37,11 @@ export default function UserReplyBox({
   error,
   inputDeviceLabel,
   isPlayingReply,
+  aiVolume,
   onStartRecording,
   onStopRecording,
   onStopReply,
+  onAiVolumeChange,
 }: UserReplyBoxProps) {
   const isRecording = status === "recording";
   const isBusy =
@@ -73,6 +79,39 @@ export default function UserReplyBox({
       <p className="voice-record-status" aria-live="polite">
         {getStatusText(disabled, status)}
       </p>
+
+      <div className="ai-volume-control">
+        <div className="ai-volume-heading">
+          <span className="ai-volume-label">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 9v6h4l5 4V5L8 9H4Zm12.5 3a4.5 4.5 0 0 0-2-4.03v8.06A4.5 4.5 0 0 0 16.5 12Zm0-8.48v2.06a7 7 0 0 1 0 12.84v2.06a9 9 0 0 0 0-16.96Z" />
+            </svg>
+            AI 音量
+          </span>
+          <output htmlFor="ai-volume-slider">
+            {Math.round(aiVolume * 100)}%
+          </output>
+        </div>
+        <input
+          id="ai-volume-slider"
+          className="ai-volume-slider"
+          type="range"
+          min="0"
+          max="100"
+          step="5"
+          value={Math.round(aiVolume * 100)}
+          aria-label="调整 AI 回复音量"
+          aria-valuetext={`${Math.round(aiVolume * 100)}%`}
+          onInput={(event) => {
+            onAiVolumeChange(Number(event.currentTarget.value) / 100);
+          }}
+          style={
+            {
+              "--ai-volume-progress": `${aiVolume * 100}%`,
+            } as CSSProperties
+          }
+        />
+      </div>
 
       {inputDeviceLabel && (
         <p className="voice-record-status">

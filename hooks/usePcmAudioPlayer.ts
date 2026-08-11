@@ -23,7 +23,10 @@ export function pcm16Base64ToFloat32(audioBase64: string) {
 
 export function usePcmAudioPlayer() {
   const [isPlaying, setIsPlaying] = useState(false);
+  const [volume, setVolumeState] = useState(1);
+  const volumeRef = useRef(1);
   const contextRef = useRef<AudioContext | null>(null);
+  const gainRef = useRef<GainNode | null>(null);
   const sourcesRef = useRef(new Set<AudioBufferSourceNode>());
   const nextStartTimeRef = useRef(0);
   const streamDoneRef = useRef(true);
@@ -45,6 +48,30 @@ export function usePcmAudioPlayer() {
     }
 
     return contextRef.current;
+  }, []);
+
+  const getGain = useCallback((context: AudioContext) => {
+    if (!gainRef.current) {
+      const gain = context.createGain();
+      gain.gain.value = volumeRef.current;
+      gain.connect(context.destination);
+      gainRef.current = gain;
+    }
+
+    return gainRef.current;
+  }, []);
+
+  const setVolume = useCallback((nextVolume: number) => {
+    const normalizedVolume = Math.min(1, Math.max(0, nextVolume));
+
+    volumeRef.current = normalizedVolume;
+    setVolumeState(normalizedVolume);
+
+    const context = contextRef.current;
+    const gain = gainRef.current;
+    if (context && gain) {
+      gain.gain.setValueAtTime(normalizedVolume, context.currentTime);
+    }
   }, []);
 
   const prepare = useCallback(async () => {
@@ -89,7 +116,7 @@ export function usePcmAudioPlayer() {
 
       const source = context.createBufferSource();
       source.buffer = buffer;
-      source.connect(context.destination);
+      source.connect(getGain(context));
 
       const startTime = Math.max(
         context.currentTime + 0.02,
@@ -109,7 +136,7 @@ export function usePcmAudioPlayer() {
       });
       source.start(startTime);
     },
-    [getContext],
+    [getContext, getGain],
   );
 
   const finish = useCallback(() => {
@@ -129,6 +156,8 @@ export function usePcmAudioPlayer() {
         } catch {}
       }
       sourcesRef.current.clear();
+      gainRef.current?.disconnect();
+      gainRef.current = null;
       void contextRef.current?.close();
       contextRef.current = null;
     },
@@ -137,6 +166,8 @@ export function usePcmAudioPlayer() {
 
   return {
     isPlaying,
+    volume,
+    setVolume,
     prepare,
     begin,
     append,
