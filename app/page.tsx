@@ -633,6 +633,14 @@ export default function Home() {
     playbackRef.current = playback;
   }, [playback]);
 
+  const handlePlaybackStateChange = useCallback(
+    (nextPlayback: PlaybackSnapshot) => {
+      playbackRef.current = nextPlayback;
+      setPlayback(nextPlayback);
+    },
+    [],
+  );
+
   useEffect(() => {
     listeningMessagesRef.current = listeningMessages;
   }, [listeningMessages]);
@@ -1674,10 +1682,7 @@ export default function Home() {
           key={`player-${trackKey}`}
           audioFile={audioFile}
           playerRef={musicPlayerRef}
-          onPlaybackStateChange={(nextPlayback) => {
-            playbackRef.current = nextPlayback;
-            setPlayback(nextPlayback);
-          }}
+          onPlaybackStateChange={handlePlaybackStateChange}
           onPlaybackIntent={() => {
             void prepareReplyAudio();
             connectQwenRealtime();
