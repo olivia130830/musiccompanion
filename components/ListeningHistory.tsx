@@ -16,61 +16,50 @@ function formatMusicTime(seconds: number): string {
   return `${minutes}:${restSeconds.toString().padStart(2, "0")}`;
 }
 
-const WAVE_HEIGHTS = [8, 15, 22, 12, 25, 18, 10, 20, 14, 7];
-
 export default function ListeningHistory({
   messages,
 }: ListeningHistoryProps) {
   return (
-    <section className="voice-turns" aria-label="语音陪听轮次">
-      <div className="voice-turns-header">
+    <section
+      className="listening-history-section glass-card"
+      aria-label="一起听的记录"
+    >
+      <div className="history-heading">
         <div>
-          <p className="voice-turns-eyebrow">VOICE COMPANION</p>
-          <h2 className="voice-turns-title">正在一起听</h2>
+          <p className="history-eyebrow">LISTENING HISTORY</p>
+          <h2 className="history-title">一起听的记录</h2>
         </div>
 
-        <span className="voice-turns-count">
-          {messages.length ? `${messages.length} 次对话` : "等待开始"}
+        <span className="history-count">
+          {messages.length ? `${messages.length} 条` : "等待开始"}
         </span>
       </div>
 
       {messages.length === 0 ? (
-        <div className="voice-turns-empty">
-          <span className="voice-turns-empty-orb" aria-hidden="true" />
-          <p>播放音乐后，AI 会听见变化并自然回应。</p>
+        <div className="history-empty">
+          播放音乐后，这里会显示 AI 的评论和你的语音转写。
         </div>
       ) : (
-        <div className="voice-turns-list">
+        <div className="listening-history">
           {messages.map((message) => {
             const isCompanion = message.sender === "companion";
 
             return (
               <article
                 key={message.id}
-                className={`voice-turn ${
-                  isCompanion ? "voice-turn-ai" : "voice-turn-user"
+                className={`history-message ${
+                  isCompanion
+                    ? "history-message-companion"
+                    : "history-message-user"
                 }`}
                 aria-label={`${isCompanion ? "AI 回应" : "你说话"}，音乐时间 ${formatMusicTime(message.musicTimeSeconds)}`}
               >
-                <span className="voice-turn-avatar" aria-hidden="true">
-                  {isCompanion ? "AI" : "你"}
-                </span>
-
-                <div className="voice-turn-body">
-                  <div className="voice-turn-meta">
-                    <span>{isCompanion ? "AI 回应了一句" : "你说了一句"}</span>
-                    <time>{formatMusicTime(message.musicTimeSeconds)}</time>
-                  </div>
-
-                  <div className="voice-turn-wave" aria-hidden="true">
-                    {WAVE_HEIGHTS.map((height, index) => (
-                      <span
-                        key={`${message.id}-wave-${index}`}
-                        style={{ height }}
-                      />
-                    ))}
-                  </div>
+                <div className="message-meta">
+                  <span>{isCompanion ? "AI" : "你"}</span>
+                  <time>{formatMusicTime(message.musicTimeSeconds)}</time>
                 </div>
+
+                <p className="message-text">{message.text}</p>
               </article>
             );
           })}

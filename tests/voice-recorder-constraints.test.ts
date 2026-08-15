@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   choosePreferredMicrophone,
+  getRecorderOptions,
   getVoiceAudioConstraints,
   isLikelySystemAudioInput,
 } from "@/hooks/useVoiceRecorder";
@@ -26,6 +27,23 @@ describe("getVoiceAudioConstraints", () => {
       voiceIsolation: true,
       suppressLocalAudioPlayback: true,
     });
+  });
+});
+
+describe("getRecorderOptions", () => {
+  it("keeps enough speech detail for transcription", () => {
+    const originalMediaRecorder = globalThis.MediaRecorder;
+    globalThis.MediaRecorder = {
+      isTypeSupported: () => true,
+    } as unknown as typeof MediaRecorder;
+
+    try {
+      expect(getRecorderOptions()).toMatchObject({
+        audioBitsPerSecond: 128_000,
+      });
+    } finally {
+      globalThis.MediaRecorder = originalMediaRecorder;
+    }
   });
 });
 

@@ -146,4 +146,48 @@ describe("Qwen audio turns", () => {
     ).toBeLessThan(262_144);
   });
 
+  it("cancels an in-flight response when playback stops", () => {
+    const { client, socket } = createReadyClient();
+
+    expect(client.cancelResponse()).toBe(true);
+    expect(socket.events().at(-1)).toEqual({
+      type: "response.cancel",
+    });
+  });
+
+  it("keeps microphone transcription when committed item metadata is missing", () => {
+    let received: { text: string; kind: string | null } | null = null;
+    const holder: { current: FakeWebSocket | null } = {
+      current: null,
+    };
+
+    globalThis.WebSocket = class extends FakeWebSocket {
+      constructor() {
+        super();
+        holder.current = this;
+      }
+    } as unknown as typeof WebSocket;
+
+    const client = new QwenRealtimeClient({
+      url: "ws://test",
+      onInputTranscriptDone: (text, kind) => {
+        received = { text, kind };
+      },
+    });
+    client.connect();
+    const socket = holder.current;
+    if (!socket) throw new Error("Fake WebSocket was not created");
+    socket.open();
+    socket.message({ type: "session.updated" });
+    socket.message({
+      type: "conversation.item.input_audio_transcription.completed",
+      transcript: "这是我的语音评论",
+    });
+
+    expect(received).toEqual({
+      text: "这是我的语音评论",
+      kind: "voice",
+    });
+  });
+
 });

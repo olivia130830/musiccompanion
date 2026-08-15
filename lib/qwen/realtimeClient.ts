@@ -17,6 +17,7 @@ export type QwenRealtimeClientOptions = {
   onAudioStart?: () => void;
   onAudioDelta?: (audioBase64: string) => void;
   onAudioDone?: () => void;
+  onResponseDone?: () => void;
   onInputTranscriptDone?: (
     text: string,
     inputKind: QwenAudioInputKind | null,
@@ -242,6 +243,16 @@ export class QwenRealtimeClient {
     this.options.onStatusChange?.("closed");
   }
 
+  public cancelResponse() {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+
+    this.finalText = "";
+    this.sendEvent({ type: "response.cancel" });
+    return true;
+  }
+
   public isReady() {
     return (
       this.isConfigured &&
@@ -464,7 +475,13 @@ export class QwenRealtimeClient {
         : null;
       if (itemId) this.inputKindByItemId.delete(itemId);
       if (transcript) {
-        this.options.onInputTranscriptDone?.(transcript, inputKind);
+        // 输入转写只会在 sendVoiceMessage 中开启；即使上游漏发
+        // committed/item_id，也应把结果归到用户语音，而不是让 UI
+        // 永久停在“语音消息”。
+        this.options.onInputTranscriptDone?.(
+          transcript,
+          inputKind ?? "voice",
+        );
       }
       return;
     }
@@ -482,7 +499,9 @@ export class QwenRealtimeClient {
         ? this.inputKindByItemId.get(itemId) ?? null
         : null;
       if (itemId) this.inputKindByItemId.delete(itemId);
-      this.options.onInputTranscriptFailed?.(inputKind);
+      this.options.onInputTranscriptFailed?.(
+        inputKind ?? "voice",
+      );
       return;
     }
 
@@ -540,6 +559,7 @@ export class QwenRealtimeClient {
       }
 
       this.finalText = "";
+      this.options.onResponseDone?.();
       this.options.onStatusChange?.("configured");
       return;
     }

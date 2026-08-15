@@ -14,7 +14,7 @@ export type VoiceRecording = {
   durationSeconds: number;
 };
 
-function getRecorderOptions() {
+export function getRecorderOptions() {
   const candidates = [
     "audio/webm;codecs=opus",
     "audio/mp4;codecs=mp4a.40.2",
@@ -25,7 +25,14 @@ function getRecorderOptions() {
     MediaRecorder.isTypeSupported(candidate),
   );
 
-  return mimeType ? { mimeType } : undefined;
+  return mimeType
+    ? {
+        mimeType,
+        // 避免浏览器使用过低的默认码率压缩人声，再转成 16 kHz PCM
+        // 时丢失辅音细节。
+        audioBitsPerSecond: 128_000,
+      }
+    : { audioBitsPerSecond: 128_000 };
 }
 
 function getExtension(mimeType: string) {
@@ -94,6 +101,7 @@ export function getVoiceAudioConstraints(
   return {
     channelCount: 1,
     sampleRate: { ideal: 16000 },
+    sampleSize: { ideal: 16 },
     echoCancellation: true,
     noiseSuppression: true,
     autoGainControl: true,

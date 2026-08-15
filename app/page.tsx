@@ -566,6 +566,9 @@ export default function Home() {
 
   const waitingForQwenResponseRef = useRef(false);
 
+  const activeQwenPromptKindRef =
+    useRef<QwenPromptKind | null>(null);
+
   const qwenResponseMusicTimeRef =
     useRef<number | null>(null);
 
@@ -768,6 +771,7 @@ export default function Home() {
           qwenReadyRef.current = false;
           qwenClientRef.current = null;
           waitingForQwenResponseRef.current = false;
+          activeQwenPromptKindRef.current = null;
           qwenResponseMusicTimeRef.current = null;
           voiceTurnActiveRef.current = false;
           setIsSendingVoice(false);
@@ -786,7 +790,17 @@ export default function Home() {
           return;
         }
 
-        waitingForQwenResponseRef.current = false;
+        if (
+          activeQwenPromptKindRef.current ===
+            "proactive_comment" &&
+          !playbackRef.current.isPlaying
+        ) {
+          waitingForQwenResponseRef.current = false;
+          activeQwenPromptKindRef.current = null;
+          qwenResponseMusicTimeRef.current = null;
+          return;
+        }
+
         addCompanionMessage(
           text,
           "qwen-realtime",
@@ -794,11 +808,6 @@ export default function Home() {
             playbackRef.current.currentTime,
         );
         qwenResponseMusicTimeRef.current = null;
-        voiceTurnActiveRef.current = false;
-        setIsSendingVoice(false);
-        clearRecording();
-        setCompanionReplyStatus("idle");
-        setQwenMomentStatus("connected");
       },
 
       onInputTranscriptDone: (text, inputKind) => {
@@ -815,11 +824,46 @@ export default function Home() {
         }
       },
 
-      onAudioStart: beginReplyAudio,
+      onAudioStart: () => {
+        if (
+          activeQwenPromptKindRef.current &&
+          (activeQwenPromptKindRef.current === "user_reply" ||
+            playbackRef.current.isPlaying)
+        ) {
+          beginReplyAudio();
+        }
+      },
 
-      onAudioDelta: appendReplyAudio,
+      onAudioDelta: (audioBase64) => {
+        if (
+          activeQwenPromptKindRef.current &&
+          (activeQwenPromptKindRef.current === "user_reply" ||
+            playbackRef.current.isPlaying)
+        ) {
+          appendReplyAudio(audioBase64);
+        }
+      },
 
-      onAudioDone: finishReplyAudio,
+      onAudioDone: () => {
+        if (
+          activeQwenPromptKindRef.current &&
+          (activeQwenPromptKindRef.current === "user_reply" ||
+            playbackRef.current.isPlaying)
+        ) {
+          finishReplyAudio();
+        }
+      },
+
+      onResponseDone: () => {
+        waitingForQwenResponseRef.current = false;
+        activeQwenPromptKindRef.current = null;
+        qwenResponseMusicTimeRef.current = null;
+        voiceTurnActiveRef.current = false;
+        setIsSendingVoice(false);
+        clearRecording();
+        setCompanionReplyStatus("idle");
+        setQwenMomentStatus("connected");
+      },
 
       onError: (message) => {
         setQwenRealtimeError(message);
@@ -828,6 +872,7 @@ export default function Home() {
         qwenReadyRef.current = false;
         qwenClientRef.current = null;
         waitingForQwenResponseRef.current = false;
+        activeQwenPromptKindRef.current = null;
         qwenResponseMusicTimeRef.current = null;
         voiceTurnActiveRef.current = false;
         setIsSendingVoice(false);
@@ -858,6 +903,7 @@ export default function Home() {
     qwenClientRef.current = null;
     qwenReadyRef.current = false;
     waitingForQwenResponseRef.current = false;
+    activeQwenPromptKindRef.current = null;
     qwenResponseMusicTimeRef.current = null;
     setQwenMomentStatus("idle");
     setQwenRealtimeStatus("closed");
@@ -866,9 +912,16 @@ export default function Home() {
   const sendPromptToQwen = useCallback(
     async ({
       prompt,
-      musicTimeSeconds,
       kind,
     }: PendingQwenPrompt) => {
+      if (
+        kind === "proactive_comment" &&
+        (!playbackRef.current.isPlaying ||
+          playbackRef.current.isSeeking)
+      ) {
+        return false;
+      }
+
       const client = connectQwenRealtime();
 
       setCompanionReplyStatus("thinking");
@@ -882,9 +935,21 @@ export default function Home() {
           throw new Error("Realtime 连接超时，请重试。");
         }
 
-        if (!audioFile || voiceTurnActiveRef.current) return false;
+        if (
+          !audioFile ||
+          voiceTurnActiveRef.current ||
+          !playbackRef.current.isPlaying ||
+          playbackRef.current.isSeeking
+        ) {
+          return false;
+        }
 
-        const segment = getRecentMusicSegment(musicTimeSeconds);
+        // 连接等待结束后再读取播放头，只截取此刻之前真正播放过的声音。
+        // 不使用定时任务创建时的旧时间，也绝不读取当前位置之后的音频。
+        const liveMusicTimeSeconds =
+          playbackRef.current.currentTime;
+
+        const segment = getRecentMusicSegment(liveMusicTimeSeconds);
         const musicAudioBase64 =
           await convertAudioFileSliceToPcm16Base64(audioFile, {
             startTimeSeconds: segment.startTimeSeconds,
@@ -893,19 +958,35 @@ export default function Home() {
 
         if (
           voiceTurnActiveRef.current ||
-          !client.sendMusicMessage(musicAudioBase64, prompt)
+          !playbackRef.current.isPlaying ||
+          playbackRef.current.isSeeking
         ) {
+          return false;
+        }
+
+        waitingForQwenResponseRef.current = true;
+        activeQwenPromptKindRef.current = kind;
+        qwenResponseMusicTimeRef.current = liveMusicTimeSeconds;
+
+        if (!client.sendMusicMessage(musicAudioBase64, prompt)) {
+          waitingForQwenResponseRef.current = false;
+          activeQwenPromptKindRef.current = null;
+          qwenResponseMusicTimeRef.current = null;
           throw new Error("歌曲音频发送失败，请重试。");
         }
 
         qwenRequestIdRef.current += 1;
-        waitingForQwenResponseRef.current = true;
-        qwenResponseMusicTimeRef.current = musicTimeSeconds;
+        if (kind === "proactive_comment") {
+          hasRequestedProactiveCommentRef.current = true;
+          lastRealtimeCommentSecondRef.current = Math.floor(
+            liveMusicTimeSeconds,
+          );
+        }
         lastQwenPromptSentMsRef.current = Date.now();
         console.info("[MusicCompanion] Qwen prompt sent", {
           requestId: qwenRequestIdRef.current,
           kind,
-          musicTimeSeconds,
+          musicTimeSeconds: liveMusicTimeSeconds,
           musicSegmentStartSeconds: segment.startTimeSeconds,
           musicSegmentDurationSeconds: segment.durationSeconds,
           promptPreview: prompt.slice(0, 120),
@@ -915,6 +996,9 @@ export default function Home() {
         setQwenMomentStatus("commenting");
         return true;
       } catch (error) {
+        waitingForQwenResponseRef.current = false;
+        activeQwenPromptKindRef.current = null;
+        qwenResponseMusicTimeRef.current = null;
         const message =
           error instanceof Error
             ? error.message
@@ -942,6 +1026,14 @@ export default function Home() {
       minimumDelayMs?: number;
       replaceScheduled?: boolean;
     }) => {
+      if (
+        kind === "proactive_comment" &&
+        (!playbackRef.current.isPlaying ||
+          playbackRef.current.isSeeking)
+      ) {
+        return false;
+      }
+
       if (
         scheduledQwenPromptTimeoutRef.current &&
         !replaceScheduled
@@ -974,9 +1066,44 @@ export default function Home() {
       scheduledQwenPromptTimeoutRef.current = setTimeout(() => {
         scheduledQwenPromptTimeoutRef.current = null;
         scheduledQwenPromptKindRef.current = null;
+
+        if (
+          kind === "proactive_comment" &&
+          (!audioFile ||
+            !playbackRef.current.isPlaying ||
+            playbackRef.current.isSeeking ||
+            voiceTurnActiveRef.current)
+        ) {
+          setCompanionReplyStatus("idle");
+          setQwenMomentStatus(
+            qwenReadyRef.current ? "connected" : "idle",
+          );
+          return;
+        }
+
+        const livePlayback = playbackRef.current;
+        const liveMusicTimeSeconds =
+          kind === "proactive_comment"
+            ? livePlayback.currentTime
+            : musicTimeSeconds;
+        const livePrompt =
+          kind === "proactive_comment" && audioFile
+            ? buildQwenPrompt({
+                kind,
+                audioFile,
+                playback: livePlayback,
+                messages: listeningMessagesRef.current,
+                localAudioFeatures,
+                isRevisitedSegment:
+                  revisitedUntilSecondRef.current > 0 &&
+                  Math.floor(livePlayback.currentTime) <=
+                    revisitedUntilSecondRef.current,
+              })
+            : prompt;
+
         void sendPromptToQwen({
-          prompt,
-          musicTimeSeconds,
+          prompt: livePrompt,
+          musicTimeSeconds: liveMusicTimeSeconds,
           kind,
         });
       }, delayMs);
@@ -984,7 +1111,7 @@ export default function Home() {
 
       return true;
     },
-    [sendPromptToQwen],
+    [audioFile, localAudioFeatures, sendPromptToQwen],
   );
 
   const cancelScheduledProactiveComment =
@@ -1000,6 +1127,40 @@ export default function Home() {
         setQwenMomentStatus("connected");
       }
     }, []);
+
+  const cancelActiveProactiveComment = useCallback(() => {
+    if (
+      activeQwenPromptKindRef.current !== "proactive_comment"
+    ) {
+      return;
+    }
+
+    qwenClientRef.current?.cancelResponse();
+    waitingForQwenResponseRef.current = false;
+    activeQwenPromptKindRef.current = null;
+    qwenResponseMusicTimeRef.current = null;
+    stopReplyAudio();
+    setCompanionReplyStatus("idle");
+    setQwenMomentStatus(
+      qwenReadyRef.current ? "connected" : "idle",
+    );
+  }, [stopReplyAudio]);
+
+  useEffect(() => {
+    if (
+      playback.isPlaying ||
+      voiceTurnActiveRef.current
+    ) {
+      return;
+    }
+
+    cancelScheduledProactiveComment();
+    cancelActiveProactiveComment();
+  }, [
+    cancelActiveProactiveComment,
+    cancelScheduledProactiveComment,
+    playback.isPlaying,
+  ]);
 
   const resetListeningSession = useCallback(() => {
     if (scheduledQwenPromptTimeoutRef.current) {
@@ -1028,6 +1189,7 @@ export default function Home() {
     revisitedUntilSecondRef.current = 0;
     lastQwenPromptSentMsRef.current = 0;
     waitingForQwenResponseRef.current = false;
+    activeQwenPromptKindRef.current = null;
     qwenResponseMusicTimeRef.current = null;
     voiceInputMusicTimeRef.current = null;
     pendingVoiceHistoryMessageIdRef.current = null;
@@ -1124,6 +1286,7 @@ export default function Home() {
     }
 
     if (!playback.isPlaying || playback.isSeeking) {
+      cancelScheduledProactiveComment();
       return;
     }
 
@@ -1189,6 +1352,7 @@ export default function Home() {
     previousPlaybackSecondRef.current = currentSecond;
 
     if (!playback.isPlaying || playback.isSeeking) {
+      cancelScheduledProactiveComment();
       return;
     }
 
@@ -1209,12 +1373,7 @@ export default function Home() {
 
     const isFirstProactiveComment =
       !hasRequestedProactiveCommentRef.current;
-    const firstCommentDeadlineReached =
-      isFirstProactiveComment &&
-      currentSecond >= FIRST_COMMENT_REQUEST_DEADLINE_SECOND;
-
     if (
-      !firstCommentDeadlineReached &&
       !isAudibleAroundCurrentTime(
         localAudioFeatures,
         currentSecond,
@@ -1236,7 +1395,7 @@ export default function Home() {
       return;
     }
 
-    const didSchedule = schedulePromptToQwen({
+    schedulePromptToQwen({
       prompt: buildQwenPrompt({
         kind: "proactive_comment",
         audioFile,
@@ -1249,11 +1408,6 @@ export default function Home() {
       musicTimeSeconds: playback.currentTime,
       replaceScheduled: false,
     });
-
-    if (didSchedule) {
-      hasRequestedProactiveCommentRef.current = true;
-      lastRealtimeCommentSecondRef.current = currentSecond;
-    }
   }, [
     audioFile,
     playback,
@@ -1346,6 +1500,7 @@ export default function Home() {
       });
 
       waitingForQwenResponseRef.current = true;
+      activeQwenPromptKindRef.current = "user_reply";
       qwenResponseMusicTimeRef.current =
         voiceInputMusicTimeRef.current ??
         playbackRef.current.currentTime;
@@ -1362,6 +1517,7 @@ export default function Home() {
         "语音评论（发送失败）",
       );
       waitingForQwenResponseRef.current = false;
+      activeQwenPromptKindRef.current = null;
       qwenResponseMusicTimeRef.current = null;
       voiceTurnActiveRef.current = false;
       setIsSendingVoice(false);
@@ -1484,8 +1640,13 @@ export default function Home() {
             <button
               type="button"
               style={styles.manualRealtimeButton}
+              disabled={!playback.isPlaying || playback.isSeeking}
               onClick={() => {
-                if (!audioFile) {
+                if (
+                  !audioFile ||
+                  !playbackRef.current.isPlaying ||
+                  playbackRef.current.isSeeking
+                ) {
                   return;
                 }
 
@@ -1513,9 +1674,13 @@ export default function Home() {
           key={`player-${trackKey}`}
           audioFile={audioFile}
           playerRef={musicPlayerRef}
-          onPlaybackStateChange={setPlayback}
+          onPlaybackStateChange={(nextPlayback) => {
+            playbackRef.current = nextPlayback;
+            setPlayback(nextPlayback);
+          }}
           onPlaybackIntent={() => {
             void prepareReplyAudio();
+            connectQwenRealtime();
           }}
           suspendForVoiceRecording={
             voiceRecorderStatus === "requesting_permission" ||
