@@ -121,11 +121,15 @@ async function decodeWithBrowser(file: File) {
 }
 
 async function decodeRecordedFile(file: File) {
-  if (file.type.includes("webm")) {
-    return decodeWebm(await file.arrayBuffer());
-  }
+  try {
+    return await decodeWithBrowser(file);
+  } catch (nativeDecodeError) {
+    if (file.type.includes("webm")) {
+      return decodeWebm(await file.arrayBuffer());
+    }
 
-  return decodeWithBrowser(file);
+    throw nativeDecodeError;
+  }
 }
 
 export async function convertAudioFileSliceToPcm16Base64(
