@@ -71,6 +71,7 @@ type PendingQwenPrompt = {
 };
 
 const QWEN_COMMENT_COOLDOWN_MS = 5000;
+const QWEN_POST_SPEECH_COOLDOWN_MS = 3000;
 const MIN_PROACTIVE_COMMENT_SECOND = 4;
 const FIRST_COMMENT_REQUEST_DEADLINE_SECOND = 16;
 const SOUND_START_GRACE_SECONDS = 2;
@@ -567,6 +568,10 @@ export default function Home() {
 
   const lastQwenPromptSentMsRef = useRef(0);
 
+  const lastReplyAudioFinishedMsRef = useRef(0);
+
+  const replyAudioPlayingRef = useRef(false);
+
   const waitingForQwenResponseRef = useRef(false);
 
   const activeQwenPromptKindRef =
@@ -617,6 +622,14 @@ export default function Home() {
     finish: finishReplyAudio,
     stop: stopReplyAudio,
   } = usePcmAudioPlayer();
+
+  useEffect(() => {
+    if (replyAudioPlayingRef.current && !isPlayingReply) {
+      lastReplyAudioFinishedMsRef.current = Date.now();
+    }
+
+    replyAudioPlayingRef.current = isPlayingReply;
+  }, [isPlayingReply]);
 
   const trackKey = useMemo(() => {
     if (!audioFile) {
@@ -725,10 +738,7 @@ export default function Home() {
           {
             id: `${commentIdPrefix}-${Date.now()}`,
             sender: "companion",
-            text:
-              cleanText.length > 60
-                ? cleanText.slice(0, 60)
-                : cleanText,
+            text: cleanText,
             musicTimeSeconds,
             commentId: `${commentIdPrefix}-comment-${Date.now()}`,
           },
@@ -743,7 +753,7 @@ export default function Home() {
     const message: ListeningMessage = {
       id,
       sender: "user",
-      text: "语音消息",
+      text: "正在识别…",
       musicTimeSeconds:
         voiceInputMusicTimeRef.current ??
         playbackRef.current.currentTime,
@@ -867,7 +877,7 @@ export default function Home() {
       onInputTranscriptFailed: (inputKind) => {
         if (inputKind === "voice") {
           updatePendingVoiceHistoryMessage(
-            "语音消息（文字转写失败）",
+            "未能识别这段录音",
           );
         }
       },
@@ -965,7 +975,9 @@ export default function Home() {
       if (
         kind === "proactive_comment" &&
         (!playbackRef.current.isPlaying ||
-          playbackRef.current.isSeeking)
+          playbackRef.current.isSeeking ||
+          waitingForQwenResponseRef.current ||
+          replyAudioPlayingRef.current)
       ) {
         return false;
       }
@@ -1092,6 +1104,8 @@ export default function Home() {
         0,
         QWEN_COMMENT_COOLDOWN_MS -
           (now - lastQwenPromptSentMsRef.current),
+        QWEN_POST_SPEECH_COOLDOWN_MS -
+          (now - lastReplyAudioFinishedMsRef.current),
       );
       const delayMs = Math.max(
         minimumDelayMs,
@@ -1112,7 +1126,9 @@ export default function Home() {
           (!audioFile ||
             !playbackRef.current.isPlaying ||
             playbackRef.current.isSeeking ||
-            voiceTurnActiveRef.current)
+            voiceTurnActiveRef.current ||
+            waitingForQwenResponseRef.current ||
+            replyAudioPlayingRef.current)
         ) {
           setCompanionReplyStatus("idle");
           setQwenMomentStatus(
@@ -1229,6 +1245,8 @@ export default function Home() {
     furthestPlaybackSecondRef.current = 0;
     revisitedUntilSecondRef.current = 0;
     lastQwenPromptSentMsRef.current = 0;
+    lastReplyAudioFinishedMsRef.current = 0;
+    replyAudioPlayingRef.current = false;
     waitingForQwenResponseRef.current = false;
     activeQwenPromptKindRef.current = null;
     qwenResponseMusicTimeRef.current = null;
@@ -1513,19 +1531,21 @@ export default function Home() {
 
     try {
       const client = connectQwenRealtime();
-      const isReady = await client.waitUntilReady();
-      if (!isReady) {
-        throw new Error("Realtime 连接超时，请重试。");
-      }
-
-      const voiceAudioBase64 =
-        await convertAudioFileSliceToPcm16Base64(
+      const [isReady, voiceAudioBase64] = await Promise.all([
+        client.isReady()
+          ? Promise.resolve(true)
+          : client.waitUntilReady(),
+        convertAudioFileSliceToPcm16Base64(
           recording.file,
           {
             startTimeSeconds: 0,
             durationSeconds: recording.durationSeconds,
           },
-        );
+        ),
+      ]);
+      if (!isReady) {
+        throw new Error("Realtime 连接超时，请重试。");
+      }
       const instructions = buildQwenPrompt({
         kind: "user_reply",
         audioFile,
