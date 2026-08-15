@@ -20,6 +20,10 @@ import {
 type MusicPlayerProps = {
   audioFile: File | null;
   onPlaybackStateChange: (snapshot: PlaybackSnapshot) => void;
+  onPlaybackAudioChunk?: (
+    samples: Float32Array,
+    sampleRate: number,
+  ) => void;
   onPlaybackIntent?: () => void;
   suspendForVoiceRecording?: boolean;
   playerRef?: Ref<MusicPlayerHandle>;
@@ -64,6 +68,7 @@ function getAudioContextClass() {
 export default function MusicPlayer({
   audioFile,
   onPlaybackStateChange,
+  onPlaybackAudioChunk,
   onPlaybackIntent,
   suspendForVoiceRecording = false,
   playerRef,
@@ -76,6 +81,7 @@ export default function MusicPlayer({
   const playRequestIdRef = useRef(0);
   const startedAtRef = useRef(0);
   const pausedAtRef = useRef(0);
+  const lastAudioChunkTimeRef = useRef(0);
   const resumeAfterVoiceRecordingRef = useRef(false);
   const playbackRef =
     useRef<PlaybackSnapshot>(INITIAL_PLAYBACK);
@@ -147,6 +153,58 @@ export default function MusicPlayer({
     );
   }, []);
 
+  const emitPlayedAudioChunk = useCallback(
+    (currentTime: number) => {
+      const audioBuffer = audioBufferRef.current;
+
+      if (!audioBuffer || !onPlaybackAudioChunk) {
+        lastAudioChunkTimeRef.current = currentTime;
+        return;
+      }
+
+      const startSample = Math.max(
+        0,
+        Math.floor(
+          lastAudioChunkTimeRef.current * audioBuffer.sampleRate,
+        ),
+      );
+      const endSample = Math.min(
+        audioBuffer.length,
+        Math.floor(currentTime * audioBuffer.sampleRate),
+      );
+
+      if (endSample <= startSample) {
+        return;
+      }
+
+      const monoSamples = new Float32Array(
+        endSample - startSample,
+      );
+
+      for (
+        let channelIndex = 0;
+        channelIndex < audioBuffer.numberOfChannels;
+        channelIndex += 1
+      ) {
+        const channel = audioBuffer.getChannelData(channelIndex);
+
+        for (
+          let sampleIndex = startSample;
+          sampleIndex < endSample;
+          sampleIndex += 1
+        ) {
+          monoSamples[sampleIndex - startSample] +=
+            channel[sampleIndex] / audioBuffer.numberOfChannels;
+        }
+      }
+
+      lastAudioChunkTimeRef.current =
+        endSample / audioBuffer.sampleRate;
+      onPlaybackAudioChunk(monoSamples, audioBuffer.sampleRate);
+    },
+    [onPlaybackAudioChunk],
+  );
+
   const updatePlayingProgress = useCallback(() => {
     const audioBuffer = audioBufferRef.current;
 
@@ -157,6 +215,7 @@ export default function MusicPlayer({
     const currentTime = readPlayingTime();
 
     pausedAtRef.current = currentTime;
+    emitPlayedAudioChunk(currentTime);
 
     updatePlayback({
       currentTime,
@@ -165,7 +224,7 @@ export default function MusicPlayer({
       isSeeking: false,
     });
 
-  }, [readPlayingTime, updatePlayback]);
+  }, [emitPlayedAudioChunk, readPlayingTime, updatePlayback]);
 
   const startProgressLoop = useCallback(() => {
     stopProgressLoop();
@@ -189,6 +248,7 @@ export default function MusicPlayer({
 
     const currentTime = readPlayingTime();
     pausedAtRef.current = currentTime;
+    emitPlayedAudioChunk(currentTime);
 
     playRequestIdRef.current += 1;
     stopProgressLoop();
@@ -201,6 +261,7 @@ export default function MusicPlayer({
       isSeeking: false,
     });
   }, [
+    emitPlayedAudioChunk,
     readPlayingTime,
     stopProgressLoop,
     stopSource,
@@ -253,6 +314,7 @@ export default function MusicPlayer({
           return;
         }
 
+        emitPlayedAudioChunk(audioBuffer.duration);
         sourceRef.current = null;
         pausedAtRef.current = 0;
         stopProgressLoop();
@@ -269,11 +331,13 @@ export default function MusicPlayer({
       startedAtRef.current =
         audioContext.currentTime - safeStart;
       pausedAtRef.current = safeStart;
+      lastAudioChunkTimeRef.current = safeStart;
 
       source.start(0, safeStart);
       startProgressLoop();
     },
     [
+      emitPlayedAudioChunk,
       startProgressLoop,
       stopProgressLoop,
       stopSource,
@@ -330,6 +394,7 @@ export default function MusicPlayer({
     audioBufferRef.current = null;
     pausedAtRef.current = 0;
     startedAtRef.current = 0;
+    lastAudioChunkTimeRef.current = 0;
     window.setTimeout(() => {
       setHasDecodedAudio(false);
     }, 0);
@@ -452,6 +517,7 @@ export default function MusicPlayer({
     const wasPlaying = playbackRef.current.isPlaying;
 
     pausedAtRef.current = nextTime;
+    lastAudioChunkTimeRef.current = nextTime;
     stopProgressLoop();
     stopSource();
 

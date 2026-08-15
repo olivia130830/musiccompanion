@@ -96,6 +96,53 @@ describe("Qwen audio turns", () => {
     });
   });
 
+  it("commits already-streamed live music without resending it", () => {
+    const { client, socket } = createReadyClient();
+
+    expect(client.commitMusicStream("listen live")).toBe(false);
+    expect(client.appendMusicAudio("live-song")).toBe(true);
+    expect(client.commitMusicStream("listen live")).toBe(true);
+
+    const events = socket.events();
+    const appendIndex = events.findIndex(
+      (event) => event.type === "input_audio_buffer.append",
+    );
+    const sessionIndex = events.findLastIndex(
+      (event) => event.type === "session.update",
+    );
+    const commitIndex = events.findIndex(
+      (event, index) =>
+        index > appendIndex &&
+        event.type === "input_audio_buffer.commit",
+    );
+    const responseIndex = events.findIndex(
+      (event, index) =>
+        index > commitIndex && event.type === "response.create",
+    );
+
+    expect(appendIndex).toBeGreaterThanOrEqual(0);
+    expect(sessionIndex).toBeGreaterThan(appendIndex);
+    expect(commitIndex).toBeGreaterThan(sessionIndex);
+    expect(responseIndex).toBeGreaterThan(commitIndex);
+    expect(
+      events.filter(
+        (event) => event.type === "input_audio_buffer.clear",
+      ),
+    ).toHaveLength(0);
+    expect(client.commitMusicStream("listen again")).toBe(false);
+  });
+
+  it("drops buffered live music when playback is interrupted", () => {
+    const { client, socket } = createReadyClient();
+
+    expect(client.appendMusicAudio("before-seek")).toBe(true);
+    expect(client.clearInputAudio()).toBe(true);
+    expect(client.commitMusicStream("must not answer")).toBe(false);
+    expect(socket.events().at(-1)).toEqual({
+      type: "input_audio_buffer.clear",
+    });
+  });
+
   it("enables transcription only for microphone voice", () => {
     const { client, socket } = createReadyClient();
 

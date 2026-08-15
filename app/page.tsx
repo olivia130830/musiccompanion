@@ -18,8 +18,11 @@ import {
   inferAudioMimeType,
   isSupportedAudioFile,
 } from "@/lib/audio/formats";
-import { convertAudioFileSliceToPcm16Base64 } from "@/lib/audio/pcm16";
-import { getRecentMusicSegment } from "@/lib/qwen/musicListening";
+import {
+  convertAudioFileSliceToPcm16Base64,
+  float32ToPcm16Base64,
+  resampleMonoFloat32,
+} from "@/lib/audio/pcm16";
 
 import AudioUploader from "@/components/AudioUploader";
 import ListeningHistory from "@/components/ListeningHistory";
@@ -635,8 +638,45 @@ export default function Home() {
 
   const handlePlaybackStateChange = useCallback(
     (nextPlayback: PlaybackSnapshot) => {
+      const previousPlayback = playbackRef.current;
+      const playbackJumped =
+        Math.abs(
+          nextPlayback.currentTime - previousPlayback.currentTime,
+        ) > 1.5;
+      const playbackStopped =
+        previousPlayback.isPlaying && !nextPlayback.isPlaying;
+
+      if (playbackJumped || playbackStopped) {
+        qwenClientRef.current?.clearInputAudio();
+      }
+
       playbackRef.current = nextPlayback;
       setPlayback(nextPlayback);
+    },
+    [],
+  );
+
+  const handlePlaybackAudioChunk = useCallback(
+    (samples: Float32Array, sampleRate: number) => {
+      if (
+        voiceTurnActiveRef.current ||
+        !qwenReadyRef.current
+      ) {
+        return;
+      }
+
+      const client = qwenClientRef.current;
+      if (!client?.isReady()) {
+        return;
+      }
+
+      const resampled = resampleMonoFloat32(
+        samples,
+        sampleRate,
+      );
+      client.appendMusicAudio(
+        float32ToPcm16Base64(resampled),
+      );
     },
     [],
   );
@@ -952,17 +992,8 @@ export default function Home() {
           return false;
         }
 
-        // 连接等待结束后再读取播放头，只截取此刻之前真正播放过的声音。
-        // 不使用定时任务创建时的旧时间，也绝不读取当前位置之后的音频。
         const liveMusicTimeSeconds =
           playbackRef.current.currentTime;
-
-        const segment = getRecentMusicSegment(liveMusicTimeSeconds);
-        const musicAudioBase64 =
-          await convertAudioFileSliceToPcm16Base64(audioFile, {
-            startTimeSeconds: segment.startTimeSeconds,
-            durationSeconds: segment.durationSeconds,
-          });
 
         if (
           voiceTurnActiveRef.current ||
@@ -976,11 +1007,13 @@ export default function Home() {
         activeQwenPromptKindRef.current = kind;
         qwenResponseMusicTimeRef.current = liveMusicTimeSeconds;
 
-        if (!client.sendMusicMessage(musicAudioBase64, prompt)) {
+        if (!client.commitMusicStream(prompt)) {
           waitingForQwenResponseRef.current = false;
           activeQwenPromptKindRef.current = null;
           qwenResponseMusicTimeRef.current = null;
-          throw new Error("歌曲音频发送失败，请重试。");
+          setCompanionReplyStatus("idle");
+          setQwenMomentStatus("connected");
+          return false;
         }
 
         qwenRequestIdRef.current += 1;
@@ -995,8 +1028,7 @@ export default function Home() {
           requestId: qwenRequestIdRef.current,
           kind,
           musicTimeSeconds: liveMusicTimeSeconds,
-          musicSegmentStartSeconds: segment.startTimeSeconds,
-          musicSegmentDurationSeconds: segment.durationSeconds,
+          inputMode: "live_stream",
           promptPreview: prompt.slice(0, 120),
         });
 
@@ -1164,6 +1196,7 @@ export default function Home() {
 
     cancelScheduledProactiveComment();
     cancelActiveProactiveComment();
+    qwenClientRef.current?.clearInputAudio();
   }, [
     cancelActiveProactiveComment,
     cancelScheduledProactiveComment,
@@ -1683,6 +1716,7 @@ export default function Home() {
           audioFile={audioFile}
           playerRef={musicPlayerRef}
           onPlaybackStateChange={handlePlaybackStateChange}
+          onPlaybackAudioChunk={handlePlaybackAudioChunk}
           onPlaybackIntent={() => {
             void prepareReplyAudio();
             connectQwenRealtime();

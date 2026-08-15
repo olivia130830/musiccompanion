@@ -183,6 +183,8 @@ export class QwenRealtimeClient {
 
   private isConfigured = false;
 
+  private hasPendingStreamAudio = false;
+
   private pendingInputKinds: QwenAudioInputKind[] = [];
 
   private readonly inputKindByItemId =
@@ -250,6 +252,40 @@ export class QwenRealtimeClient {
 
     this.finalText = "";
     this.sendEvent({ type: "response.cancel" });
+    return true;
+  }
+
+  public appendMusicAudio(audioBase64: string) {
+    if (!audioBase64 || !this.isReady()) {
+      return false;
+    }
+
+    this.appendAudio(audioBase64);
+    this.hasPendingStreamAudio = true;
+    return true;
+  }
+
+  public clearInputAudio() {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      this.hasPendingStreamAudio = false;
+      return false;
+    }
+
+    this.sendEvent({ type: "input_audio_buffer.clear" });
+    this.hasPendingStreamAudio = false;
+    return true;
+  }
+
+  public commitMusicStream(instructions: string) {
+    if (!this.isReady() || !this.hasPendingStreamAudio) {
+      return false;
+    }
+
+    this.sendSessionUpdate(instructions, false);
+    this.pendingInputKinds.push("music");
+    this.sendEvent({ type: "input_audio_buffer.commit" });
+    this.hasPendingStreamAudio = false;
+    this.createSpokenResponse();
     return true;
   }
 
@@ -339,7 +375,12 @@ export class QwenRealtimeClient {
   ) {
     this.pendingInputKinds.push(inputKind);
     this.sendEvent({ type: "input_audio_buffer.clear" });
+    this.hasPendingStreamAudio = false;
+    this.appendAudio(audioBase64);
+    this.sendEvent({ type: "input_audio_buffer.commit" });
+  }
 
+  private appendAudio(audioBase64: string) {
     for (
       let offset = 0;
       offset < audioBase64.length;
@@ -353,8 +394,6 @@ export class QwenRealtimeClient {
         ),
       });
     }
-
-    this.sendEvent({ type: "input_audio_buffer.commit" });
   }
 
   private createSpokenResponse() {
@@ -369,6 +408,7 @@ export class QwenRealtimeClient {
   private resetPendingAudioInputs() {
     this.pendingInputKinds = [];
     this.inputKindByItemId.clear();
+    this.hasPendingStreamAudio = false;
   }
 
   private sendSessionUpdate(
