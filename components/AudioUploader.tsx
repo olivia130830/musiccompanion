@@ -1,154 +1,107 @@
 "use client";
 
 import {
-  useRef,
   useState,
-  type ChangeEvent,
+  type CSSProperties,
 } from "react";
 
-interface AudioUploaderProps {
-  onFileSelect: (file: File) => void;
+import {
+  AUDIO_FILE_ACCEPT,
+  getAcceptedAudioDescription,
+  isSupportedAudioFile,
+} from "@/lib/audio/formats";
+
+type AudioUploaderProps = {
   disabled?: boolean;
-}
-
-const ACCEPTED_EXTENSIONS = [
-  "mp3",
-  "wav",
-  "m4a",
-];
-
-const ACCEPTED_MIMES = [
-  "audio/mpeg",
-  "audio/mp3",
-  "audio/wav",
-  "audio/x-wav",
-  "audio/mp4",
-  "audio/x-m4a",
-];
-
-const MAX_FILE_SIZE_BYTES =
-  100 * 1024 * 1024;
+  onFileSelect: (file: File) => void;
+};
 
 export default function AudioUploader({
-  onFileSelect,
   disabled = false,
+  onFileSelect,
 }: AudioUploaderProps) {
-  const fileInputRef =
-    useRef<HTMLInputElement | null>(
-      null,
-    );
-
-  const [error, setError] =
-    useState("");
-
-  const validateFile = (
-    file: File,
-  ): string | null => {
-    const extension =
-      file.name
-        .split(".")
-        .pop()
-        ?.toLowerCase() ?? "";
-
-    if (
-      !ACCEPTED_EXTENSIONS.includes(
-        extension,
-      )
-    ) {
-      return "请选择MP3、WAV或M4A音频文件。";
-    }
-
-    if (
-      file.type !== "" &&
-      !ACCEPTED_MIMES.includes(
-        file.type,
-      )
-    ) {
-      return "这个音频文件的格式不受支持。";
-    }
-
-    if (
-      file.size >
-      MAX_FILE_SIZE_BYTES
-    ) {
-      return "音频文件不能超过100MB。";
-    }
-
-    if (file.size === 0) {
-      return "这个音频文件是空的。";
-    }
-
-    return null;
-  };
-
-  const handleFileChange = (
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
-    setError("");
-
-    const file =
-      event.currentTarget.files?.[0];
-
-    if (!file) {
-      return;
-    }
-
-    const validationError =
-      validateFile(file);
-
-    if (validationError) {
-      setError(validationError);
-      return;
-    }
-
-    onFileSelect(file);
-  };
-
-  const handleClick = () => {
-    if (disabled) {
-      return;
-    }
-
-    const input =
-      fileInputRef.current;
-
-    if (!input) {
-      return;
-    }
-
-    input.value = "";
-    input.click();
-  };
+  const [error, setError] = useState("");
 
   return (
-    <div>
-      <input
-        ref={fileInputRef}
-        type="file"
-        disabled={disabled}
-        accept="audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/mp4,audio/x-m4a,.mp3,.wav,.m4a"
-        onChange={handleFileChange}
-      />
-
-      <button
-        type="button"
-        className="upload-button"
-        disabled={disabled}
-        onClick={handleClick}
+    <div style={styles.wrapper}>
+      <label
+        style={{
+          ...styles.uploadButton,
+          ...(disabled ? styles.disabled : null),
+        }}
       >
-        {disabled
-          ? "正在分析…"
-          : "选择音乐"}
-      </button>
+        <input
+          type="file"
+          accept={AUDIO_FILE_ACCEPT}
+          disabled={disabled}
+          style={styles.input}
+          onChange={(event) => {
+            const file = event.target.files?.[0];
 
-      {error && (
-        <p
-          className="upload-error"
-          role="alert"
-        >
-          {error}
-        </p>
-      )}
+            if (!file) {
+              return;
+            }
+
+            if (!isSupportedAudioFile(file)) {
+              setError(
+                `暂不支持这个格式。可上传 ${getAcceptedAudioDescription()}。`,
+              );
+              event.target.value = "";
+              return;
+            }
+
+            setError("");
+            onFileSelect(file);
+            event.target.value = "";
+          }}
+        />
+
+        选择音乐文件
+      </label>
+
+      {error && <p style={styles.error}>{error}</p>}
     </div>
   );
 }
+
+const styles: Record<string, CSSProperties> = {
+  wrapper: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "10px",
+  },
+
+  uploadButton: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    border: "1px solid rgba(116, 139, 181, 0.2)",
+    borderRadius: "999px",
+    padding: "11px 18px",
+    background: "rgba(255, 255, 255, 0.72)",
+    color: "var(--text-secondary)",
+    fontSize: "14px",
+    cursor: "pointer",
+    boxShadow: "0 10px 30px rgba(74, 107, 163, 0.08)",
+    backdropFilter: "blur(16px)",
+  },
+
+  disabled: {
+    opacity: 0.5,
+    cursor: "not-allowed",
+  },
+
+  input: {
+    display: "none",
+  },
+
+  error: {
+    maxWidth: "420px",
+    margin: 0,
+    color: "#c2410c",
+    fontSize: "12px",
+    lineHeight: 1.6,
+    textAlign: "center",
+  },
+};

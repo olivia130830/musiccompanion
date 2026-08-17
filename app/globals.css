@@ -554,115 +554,6 @@ input[type="range"]:focus-visible {
   outline-offset: 5px;
 }
 
-/* 当前评论 */
-
-.current-comment-enter {
-  animation:
-    current-comment-enter
-    380ms ease-out;
-}
-
-.current-comment-waiting,
-.current-comment-card {
-  width: 100%;
-  max-width: 520px;
-  min-height: 108px;
-
-  padding: 21px;
-
-  border-radius: 24px;
-
-  backdrop-filter:
-    blur(22px);
-
-  -webkit-backdrop-filter:
-    blur(22px);
-}
-
-.current-comment-waiting {
-  border:
-    1px dashed
-    rgba(102, 132, 185, 0.28);
-
-  background:
-    rgba(255, 255, 255, 0.5);
-}
-
-.current-comment-card {
-  border:
-    1px solid
-    rgba(103, 139, 202, 0.18);
-
-  background:
-    linear-gradient(
-      135deg,
-      rgba(255, 255, 255, 0.88),
-      rgba(234, 244, 255, 0.82)
-    );
-
-  box-shadow:
-    var(--shadow-card);
-}
-
-.current-comment-meta {
-  display: flex;
-  align-items: center;
-  justify-content:
-    space-between;
-
-  gap: 12px;
-
-  margin-bottom: 10px;
-}
-
-.current-comment-label,
-.current-comment-time {
-  color:
-    var(--text-secondary);
-
-  font-size: 12px;
-}
-
-.current-comment-label {
-  letter-spacing: 0.06em;
-}
-
-.current-comment-text {
-  color:
-    var(--text-primary);
-
-  font-size: 16px;
-  line-height: 1.75;
-}
-
-.current-comment-waiting-text {
-  margin-top: 8px;
-
-  color:
-    var(--text-secondary);
-
-  font-size: 14px;
-  line-height: 1.7;
-}
-
-@keyframes current-comment-enter {
-  from {
-    opacity: 0;
-
-    transform:
-      translateY(10px)
-      scale(0.985);
-  }
-
-  to {
-    opacity: 1;
-
-    transform:
-      translateY(0)
-      scale(1);
-  }
-}
-
 /* 共同聆听记录 */
 
 .listening-history-section {
@@ -903,79 +794,15 @@ input[type="range"]:focus-visible {
   font-weight: 400;
 }
 
-.reply-textarea {
+.voice-record-button {
   width: 100%;
-  min-height: 92px;
-
-  resize: vertical;
-
-  padding:
-    13px 14px;
-
-  border:
-    1px solid
-    var(--border-light);
-
-  border-radius: 15px;
-  outline: none;
-
-  background:
-    rgba(247, 250, 255, 0.82);
-
-  color:
-    var(--text-primary);
-
-  font-size: 14px;
-  line-height: 1.6;
-
-  transition:
-    border-color 160ms ease,
-    box-shadow 160ms ease,
-    background-color 160ms ease;
-}
-
-.reply-textarea::placeholder {
-  color:
-    var(--text-tertiary);
-}
-
-.reply-textarea:focus {
-  border-color:
-    rgba(85, 120, 237, 0.5);
-
-  background: #ffffff;
-
-  box-shadow:
-    0 0 0 4px
-    rgba(85, 120, 237, 0.1);
-}
-
-.reply-textarea:disabled {
-  cursor: not-allowed;
-  opacity: 0.52;
-}
-
-.reply-actions {
   display: flex;
   align-items: center;
-  justify-content:
-    space-between;
-
-  gap: 14px;
-}
-
-.reply-help {
-  color:
-    var(--text-tertiary);
-
-  font-size: 11px;
-}
-
-.reply-send-button {
-  flex-shrink: 0;
+  justify-content: center;
+  gap: 10px;
 
   padding:
-    9px 18px;
+    16px 20px;
 
   border-radius: 999px;
 
@@ -992,7 +819,7 @@ input[type="range"]:focus-visible {
 
   color: #ffffff;
 
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 400;
 
   transition:
@@ -1000,7 +827,7 @@ input[type="range"]:focus-visible {
     box-shadow 160ms ease;
 }
 
-.reply-send-button:hover:not(:disabled) {
+.voice-record-button:hover:not(:disabled) {
   transform:
     translateY(-2px);
 
@@ -1009,7 +836,7 @@ input[type="range"]:focus-visible {
     rgba(85, 120, 237, 0.28);
 }
 
-.reply-send-button:focus-visible {
+.voice-record-button:focus-visible {
   outline:
     3px solid
     rgba(85, 120, 237, 0.22);
@@ -1017,8 +844,383 @@ input[type="range"]:focus-visible {
   outline-offset: 3px;
 }
 
-.reply-send-button:disabled {
+.voice-record-button:disabled,
+.voice-secondary-button:disabled {
   opacity: 0.42;
+}
+
+.voice-record-button-active {
+  background: linear-gradient(135deg, #e85f72, #d84670);
+}
+
+.voice-record-status,
+.voice-record-error {
+  margin: 0;
+  font-size: 12px;
+  text-align: center;
+}
+
+.voice-record-status {
+  color: var(--text-tertiary);
+}
+
+.voice-record-error {
+  color: #cc4d65;
+}
+
+.ai-volume-control {
+  width: min(100%, 360px);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 2px;
+  padding: 13px 15px 14px;
+  border: 1px solid rgba(111, 135, 211, 0.14);
+  border-radius: 17px;
+  background: rgba(244, 248, 255, 0.78);
+}
+
+.ai-volume-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.ai-volume-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.ai-volume-label svg {
+  width: 16px;
+  height: 16px;
+  fill: var(--accent);
+}
+
+.ai-volume-heading output {
+  min-width: 34px;
+  color: var(--accent-strong);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.ai-volume-slider {
+  --ai-volume-progress: 100%;
+  width: 100%;
+  height: 18px;
+  margin: 0;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.ai-volume-slider::-webkit-slider-runnable-track {
+  height: 5px;
+  border-radius: 999px;
+  background:
+    linear-gradient(
+      90deg,
+      var(--accent) 0 var(--ai-volume-progress),
+      rgba(116, 132, 170, 0.18) var(--ai-volume-progress) 100%
+    );
+}
+
+.ai-volume-slider::-moz-range-track {
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(116, 132, 170, 0.18);
+}
+
+.ai-volume-slider::-moz-range-progress {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.ai-volume-slider::-webkit-slider-thumb {
+  width: 17px;
+  height: 17px;
+  margin-top: -6px;
+  appearance: none;
+  border: 3px solid #ffffff;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 2px 7px rgba(70, 95, 170, 0.28);
+}
+
+.ai-volume-slider::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border: 3px solid #ffffff;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 2px 7px rgba(70, 95, 170, 0.28);
+}
+
+.ai-volume-slider:focus-visible {
+  outline: 3px solid rgba(85, 120, 237, 0.2);
+  outline-offset: 3px;
+  border-radius: 999px;
+}
+
+.voice-recording-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 16px;
+  background: rgba(247, 250, 255, 0.82);
+}
+
+.voice-recording-preview audio {
+  width: 100%;
+}
+
+.voice-recording-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.voice-download-link,
+.voice-secondary-button {
+  padding: 8px 13px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.voice-download-link,
+.voice-secondary-button {
+  border: 1px solid var(--border-light);
+  background: #ffffff;
+  color: var(--text-secondary);
+}
+
+/* 语音通话式交互 */
+
+.voice-turns,
+.voice-call-box {
+  width: 100%;
+  max-width: 560px;
+  border: 1px solid var(--border-light);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.7);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+
+.voice-turns {
+  padding: 22px;
+}
+
+.voice-turns-header,
+.voice-turn-meta,
+.voice-call-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.voice-turns-header {
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.voice-turns-eyebrow {
+  margin-bottom: 4px;
+  color: var(--accent);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+.voice-turns-title {
+  font-size: 18px;
+  font-weight: 400;
+}
+
+.voice-turns-count,
+.voice-turn-meta,
+.voice-turns-empty {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.voice-turns-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 26px 12px 18px;
+  text-align: center;
+}
+
+.voice-turns-empty-orb {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #8bc7ff, #9b7cf0);
+  box-shadow: 0 0 0 10px rgba(108, 145, 239, 0.08);
+}
+
+.voice-turns-list {
+  max-height: 330px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  padding: 2px;
+}
+
+.voice-turn {
+  width: min(78%, 360px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.voice-turn-ai {
+  align-self: flex-start;
+}
+
+.voice-turn-user {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+}
+
+.voice-turn-avatar {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #f0f5ff;
+  color: var(--accent-strong);
+  font-size: 10px;
+}
+
+.voice-turn-user .voice-turn-avatar {
+  background: linear-gradient(135deg, var(--accent), var(--accent-purple));
+  color: #fff;
+}
+
+.voice-turn-body {
+  min-width: 0;
+  flex: 1;
+  padding: 11px 14px;
+  border: 1px solid var(--border-light);
+  border-radius: 18px;
+  background: rgba(247, 250, 255, 0.9);
+}
+
+.voice-turn-user .voice-turn-body {
+  background: rgba(89, 122, 237, 0.09);
+}
+
+.voice-turn-meta {
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.voice-turn-wave {
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.voice-turn-wave span {
+  width: 3px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #78baf6, #8a7deb);
+  opacity: 0.72;
+}
+
+.voice-turn-user .voice-turn-wave {
+  justify-content: flex-end;
+}
+
+.voice-call-box {
+  align-items: center;
+  gap: 14px;
+  padding: 26px 22px;
+}
+
+.voice-call-heading {
+  justify-content: center;
+  gap: 8px;
+}
+
+.voice-call-presence {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #aab2c1;
+}
+
+.voice-call-presence-active {
+  background: #61c99c;
+  box-shadow: 0 0 0 5px rgba(97, 201, 156, 0.12);
+}
+
+.voice-call-stage {
+  position: relative;
+  width: 128px;
+  height: 128px;
+  display: grid;
+  place-items: center;
+}
+
+.voice-call-ring {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(92, 126, 238, 0.08);
+}
+
+.voice-call-ring-one {
+  inset: 12px;
+}
+
+.voice-call-ring-two {
+  inset: 0;
+  opacity: 0.55;
+}
+
+.voice-call-stage-listening .voice-call-ring,
+.voice-call-stage-speaking .voice-call-ring {
+  animation: voice-call-pulse 1.6s ease-in-out infinite;
+}
+
+.voice-call-stage .voice-record-button {
+  z-index: 1;
+  width: 72px;
+  height: 72px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.voice-mic-icon {
+  font-size: 16px;
+}
+
+@keyframes voice-call-pulse {
+  0%, 100% { transform: scale(0.88); opacity: 0.4; }
+  50% { transform: scale(1); opacity: 0.9; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-call-stage-listening .voice-call-ring,
+  .voice-call-stage-speaking .voice-call-ring {
+    animation: none;
+  }
 }
 
 /* 手机适配 */
@@ -1045,15 +1247,15 @@ input[type="range"]:focus-visible {
     width: 94%;
   }
 
-  .reply-actions {
-    align-items: flex-end;
+  .voice-turns,
+  .voice-call-box {
+    border-radius: 22px;
   }
 
-  .reply-help {
-    max-width: 185px;
-
-    line-height: 1.5;
+  .voice-turn {
+    width: 90%;
   }
+
 }
 
 /* 减少动画 */

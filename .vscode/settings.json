@@ -1,0 +1,12 @@
+{
+  "debug.javascript.autoAttachFilter": "disabled",
+  "debug.javascript.terminalOptions": {
+    "skipFiles": [
+      "<node_internals>/**",
+      "**/node_modules/**"
+    ]
+  },
+  "terminal.integrated.env.osx": {
+    "NODE_OPTIONS": ""
+  }
+}
