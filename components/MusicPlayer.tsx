@@ -77,6 +77,13 @@ export default function MusicPlayer({
   const audioBufferRef = useRef<AudioBuffer | null>(null);
   const sourceRef =
     useRef<AudioBufferSourceNode | null>(null);
+  const mediaElementRef =
+    useRef<HTMLMediaElement | null>(null);
+  const mediaSourceRef =
+    useRef<MediaElementAudioSourceNode | null>(null);
+  const mediaProcessorRef =
+    useRef<ScriptProcessorNode | null>(null);
+  const mediaObjectUrlRef = useRef("");
   const progressIntervalRef = useRef<number | null>(null);
   const playRequestIdRef = useRef(0);
   const startedAtRef = useRef(0);
@@ -136,7 +143,53 @@ export default function MusicPlayer({
     } catch {}
   }, []);
 
+  const cleanupMediaElement = useCallback(() => {
+    const mediaElement = mediaElementRef.current;
+    const mediaSource = mediaSourceRef.current;
+    const mediaProcessor = mediaProcessorRef.current;
+
+    mediaElementRef.current = null;
+    mediaSourceRef.current = null;
+    mediaProcessorRef.current = null;
+
+    if (mediaElement) {
+      mediaElement.onended = null;
+      mediaElement.pause();
+      mediaElement.removeAttribute("src");
+      mediaElement.load();
+    }
+
+    if (mediaProcessor) {
+      mediaProcessor.onaudioprocess = null;
+      try {
+        mediaProcessor.disconnect();
+      } catch {}
+    }
+
+    if (mediaSource) {
+      try {
+        mediaSource.disconnect();
+      } catch {}
+    }
+
+    if (mediaObjectUrlRef.current) {
+      URL.revokeObjectURL(mediaObjectUrlRef.current);
+      mediaObjectUrlRef.current = "";
+    }
+  }, []);
+
   const readPlayingTime = useCallback(() => {
+    const mediaElement = mediaElementRef.current;
+
+    if (mediaElement) {
+      return Math.min(
+        Number.isFinite(mediaElement.duration)
+          ? mediaElement.duration
+          : mediaElement.currentTime,
+        Math.max(0, mediaElement.currentTime),
+      );
+    }
+
     const audioContext = audioContextRef.current;
     const audioBuffer = audioBufferRef.current;
 
@@ -207,19 +260,31 @@ export default function MusicPlayer({
 
   const updatePlayingProgress = useCallback(() => {
     const audioBuffer = audioBufferRef.current;
+    const mediaElement = mediaElementRef.current;
+    const duration =
+      audioBuffer?.duration ?? mediaElement?.duration ?? 0;
+    const isMediaPlaying = Boolean(
+      mediaElement && !mediaElement.paused && !mediaElement.ended,
+    );
 
-    if (!audioBuffer || !sourceRef.current) {
+    if (
+      !Number.isFinite(duration) ||
+      duration <= 0 ||
+      (!sourceRef.current && !isMediaPlaying)
+    ) {
       return;
     }
 
     const currentTime = readPlayingTime();
 
     pausedAtRef.current = currentTime;
-    emitPlayedAudioChunk(currentTime);
+    if (audioBuffer) {
+      emitPlayedAudioChunk(currentTime);
+    }
 
     updatePlayback({
       currentTime,
-      duration: audioBuffer.duration,
+      duration,
       isPlaying: true,
       isSeeking: false,
     });
@@ -241,22 +306,31 @@ export default function MusicPlayer({
 
   const pausePlayback = useCallback(() => {
     const audioBuffer = audioBufferRef.current;
+    const mediaElement = mediaElementRef.current;
+    const duration =
+      audioBuffer?.duration ?? mediaElement?.duration ?? 0;
 
-    if (!audioBuffer) {
+    if (!Number.isFinite(duration) || duration <= 0) {
       return;
     }
 
     const currentTime = readPlayingTime();
     pausedAtRef.current = currentTime;
-    emitPlayedAudioChunk(currentTime);
+    if (audioBuffer) {
+      emitPlayedAudioChunk(currentTime);
+    }
 
     playRequestIdRef.current += 1;
     stopProgressLoop();
-    stopSource();
+    if (mediaElement) {
+      mediaElement.pause();
+    } else {
+      stopSource();
+    }
 
     updatePlayback({
       currentTime,
-      duration: audioBuffer.duration,
+      duration,
       isPlaying: false,
       isSeeking: false,
     });
@@ -272,11 +346,19 @@ export default function MusicPlayer({
     async (startSeconds: number) => {
       const audioContext = audioContextRef.current;
       const audioBuffer = audioBufferRef.current;
+      const mediaElement = mediaElementRef.current;
+      const duration =
+        audioBuffer?.duration ?? mediaElement?.duration ?? 0;
       const requestId = playRequestIdRef.current + 1;
 
       playRequestIdRef.current = requestId;
 
-      if (!audioContext || !audioBuffer) {
+      if (
+        !audioContext ||
+        !Number.isFinite(duration) ||
+        duration <= 0 ||
+        (!audioBuffer && !mediaElement)
+      ) {
         return;
       }
 
@@ -287,21 +369,53 @@ export default function MusicPlayer({
       }
 
       stopProgressLoop();
-      stopSource();
+      if (mediaElement) {
+        mediaElement.pause();
+      } else {
+        stopSource();
+      }
 
       const safeStart = Math.min(
         Math.max(0, startSeconds),
-        Math.max(0, audioBuffer.duration - 0.01),
+        Math.max(0, duration - 0.01),
       );
 
-      if (safeStart >= audioBuffer.duration) {
+      if (safeStart >= duration) {
         pausedAtRef.current = 0;
         updatePlayback({
-          currentTime: audioBuffer.duration,
-          duration: audioBuffer.duration,
+          currentTime: duration,
+          duration,
           isPlaying: false,
           isSeeking: false,
         });
+        return;
+      }
+
+      if (mediaElement) {
+        mediaElement.currentTime = safeStart;
+        pausedAtRef.current = safeStart;
+
+        try {
+          await mediaElement.play();
+        } catch (error) {
+          setPlayerError(
+            error instanceof Error
+              ? `无法播放这个媒体文件：${error.message}`
+              : "无法播放这个媒体文件。",
+          );
+          return;
+        }
+
+        if (requestId !== playRequestIdRef.current) {
+          mediaElement.pause();
+          return;
+        }
+
+        startProgressLoop();
+        return;
+      }
+
+      if (!audioBuffer) {
         return;
       }
 
@@ -390,6 +504,7 @@ export default function MusicPlayer({
 
     stopProgressLoop();
     stopSource();
+    cleanupMediaElement();
 
     audioBufferRef.current = null;
     pausedAtRef.current = 0;
@@ -455,31 +570,180 @@ export default function MusicPlayer({
           isSeeking: false,
         });
       })
-      .catch((error) => {
+      .catch(async (decodeError) => {
         if (isCancelled) {
           return;
         }
 
-        const message =
-          error instanceof Error
-            ? error.message
-            : "音频解码失败。";
+        try {
+          const playableBlob = createPlayableAudioBlob(audioFile);
+          const objectUrl = URL.createObjectURL(playableBlob);
+          const mediaElement = document.createElement(
+            playableBlob.type.startsWith("video/")
+              ? "video"
+              : "audio",
+          );
 
-        setIsDecoding(false);
-        setHasDecodedAudio(false);
-        setPlayerError(
-          `这个音频仍然无法解码，可以换成 ${getAcceptedAudioDescription()}。具体原因：${message}`,
-        );
-        updatePlayback(INITIAL_PLAYBACK);
+          mediaObjectUrlRef.current = objectUrl;
+          mediaElementRef.current = mediaElement;
+          mediaElement.preload = "auto";
+          if (mediaElement instanceof HTMLVideoElement) {
+            mediaElement.playsInline = true;
+          }
+
+          await new Promise<void>((resolve, reject) => {
+            const handleLoadedMetadata = () => {
+              cleanupListeners();
+              resolve();
+            };
+            const handleError = () => {
+              cleanupListeners();
+              reject(
+                new Error(
+                  mediaElement.error?.message ||
+                    "浏览器无法读取这个媒体文件的音轨。",
+                ),
+              );
+            };
+            const cleanupListeners = () => {
+              mediaElement.removeEventListener(
+                "loadedmetadata",
+                handleLoadedMetadata,
+              );
+              mediaElement.removeEventListener(
+                "error",
+                handleError,
+              );
+            };
+
+            mediaElement.addEventListener(
+              "loadedmetadata",
+              handleLoadedMetadata,
+            );
+            mediaElement.addEventListener("error", handleError);
+            mediaElement.src = objectUrl;
+            mediaElement.load();
+          });
+
+          if (isCancelled) {
+            return;
+          }
+
+          if (
+            !Number.isFinite(mediaElement.duration) ||
+            mediaElement.duration <= 0
+          ) {
+            throw new Error("没有读取到可播放的音轨时长。");
+          }
+
+          const mediaSource =
+            audioContext.createMediaElementSource(mediaElement);
+          const mediaProcessor =
+            audioContext.createScriptProcessor(2048, 2, 1);
+
+          mediaSource.connect(audioContext.destination);
+          mediaSource.connect(mediaProcessor);
+          mediaProcessor.connect(audioContext.destination);
+          mediaProcessor.onaudioprocess = (event) => {
+            if (
+              mediaElement.paused ||
+              mediaElement.ended ||
+              !onPlaybackAudioChunk
+            ) {
+              return;
+            }
+
+            const inputBuffer = event.inputBuffer;
+            const monoSamples = new Float32Array(
+              inputBuffer.length,
+            );
+
+            for (
+              let channelIndex = 0;
+              channelIndex < inputBuffer.numberOfChannels;
+              channelIndex += 1
+            ) {
+              const channel =
+                inputBuffer.getChannelData(channelIndex);
+
+              for (
+                let sampleIndex = 0;
+                sampleIndex < inputBuffer.length;
+                sampleIndex += 1
+              ) {
+                monoSamples[sampleIndex] +=
+                  channel[sampleIndex] /
+                  inputBuffer.numberOfChannels;
+              }
+            }
+
+            onPlaybackAudioChunk(
+              monoSamples,
+              inputBuffer.sampleRate,
+            );
+          };
+
+          mediaSourceRef.current = mediaSource;
+          mediaProcessorRef.current = mediaProcessor;
+          mediaElement.onended = () => {
+            if (mediaElementRef.current !== mediaElement) {
+              return;
+            }
+
+            pausedAtRef.current = 0;
+            stopProgressLoop();
+            updatePlayback({
+              currentTime: mediaElement.duration,
+              duration: mediaElement.duration,
+              isPlaying: false,
+              isSeeking: false,
+            });
+          };
+
+          setHasDecodedAudio(true);
+          pausedAtRef.current = 0;
+          setIsDecoding(false);
+          setPlayerError("");
+          updatePlayback({
+            currentTime: 0,
+            duration: mediaElement.duration,
+            isPlaying: false,
+            isSeeking: false,
+          });
+        } catch (mediaError) {
+          if (isCancelled) {
+            return;
+          }
+
+          cleanupMediaElement();
+          const decodeMessage =
+            decodeError instanceof Error
+              ? decodeError.message
+              : "音频解码失败。";
+          const mediaMessage =
+            mediaError instanceof Error
+              ? mediaError.message
+              : "媒体音轨读取失败。";
+
+          setIsDecoding(false);
+          setHasDecodedAudio(false);
+          setPlayerError(
+            `这个文件的音轨仍然无法解码，可以换成 ${getAcceptedAudioDescription()}。具体原因：${decodeMessage}；${mediaMessage}`,
+          );
+          updatePlayback(INITIAL_PLAYBACK);
+        }
       });
 
     return () => {
       isCancelled = true;
       stopProgressLoop();
       stopSource();
+      cleanupMediaElement();
     };
   }, [
     audioFile,
+    cleanupMediaElement,
+    onPlaybackAudioChunk,
     stopProgressLoop,
     stopSource,
     updatePlayback,
@@ -489,10 +753,11 @@ export default function MusicPlayer({
     return () => {
       stopProgressLoop();
       stopSource();
+      cleanupMediaElement();
       void audioContextRef.current?.close();
       audioContextRef.current = null;
     };
-  }, [stopProgressLoop, stopSource]);
+  }, [cleanupMediaElement, stopProgressLoop, stopSource]);
 
   const handlePlayPause = () => {
     if (playback.isPlaying) {
@@ -508,8 +773,11 @@ export default function MusicPlayer({
     event: React.ChangeEvent<HTMLInputElement>,
   ) => {
     const audioBuffer = audioBufferRef.current;
+    const mediaElement = mediaElementRef.current;
+    const duration =
+      audioBuffer?.duration ?? mediaElement?.duration ?? 0;
 
-    if (!audioBuffer) {
+    if (!Number.isFinite(duration) || duration <= 0) {
       return;
     }
 
@@ -519,7 +787,12 @@ export default function MusicPlayer({
     pausedAtRef.current = nextTime;
     lastAudioChunkTimeRef.current = nextTime;
     stopProgressLoop();
-    stopSource();
+    if (mediaElement) {
+      mediaElement.pause();
+      mediaElement.currentTime = nextTime;
+    } else {
+      stopSource();
+    }
 
     if (wasPlaying) {
       void playFrom(nextTime);
@@ -527,7 +800,7 @@ export default function MusicPlayer({
       playRequestIdRef.current += 1;
       updatePlayback({
         currentTime: nextTime,
-        duration: audioBuffer.duration,
+        duration,
         isPlaying: false,
         isSeeking: false,
       });
