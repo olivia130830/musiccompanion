@@ -15,6 +15,7 @@ import {
 } from "@/lib/qwen/realtimeClient";
 import {
   getFileExtension,
+  getAcceptedAudioDescription,
   inferAudioMimeType,
   isSupportedAudioFile,
 } from "@/lib/audio/formats";
@@ -1294,7 +1295,7 @@ export default function Home() {
   const handleFileSelect = async (file: File) => {
     if (!isSupportedAudioFile(file)) {
       setAudioFileError(
-        "暂不支持这个音频格式，请选择 mp3、m4a、aac、wav、flac、ogg 或 webm。",
+        `暂不支持这个格式，请选择 ${getAcceptedAudioDescription()}。`,
       );
       return;
     }
