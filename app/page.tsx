@@ -956,17 +956,9 @@ export default function Home() {
     updatePendingVoiceHistoryMessage,
   ]);
 
-  const disconnectQwenRealtime = useCallback(() => {
-    stopReplyAudio();
-    qwenClientRef.current?.disconnect();
-    qwenClientRef.current = null;
-    qwenReadyRef.current = false;
-    waitingForQwenResponseRef.current = false;
-    activeQwenPromptKindRef.current = null;
-    qwenResponseMusicTimeRef.current = null;
-    setQwenMomentStatus("idle");
-    setQwenRealtimeStatus("closed");
-  }, [stopReplyAudio]);
+  useEffect(() => {
+    connectQwenRealtime();
+  }, [connectQwenRealtime]);
 
   const sendPromptToQwen = useCallback(
     async ({
@@ -1665,27 +1657,6 @@ export default function Home() {
               </p>
             </div>
 
-            <div style={styles.realtimeButtons}>
-              <button
-                type="button"
-                style={styles.realtimeButton}
-                onClick={connectQwenRealtime}
-                disabled={
-                  qwenRealtimeStatus === "connecting" ||
-                  qwenRealtimeStatus === "configured"
-                }
-              >
-                连接千问
-              </button>
-
-              <button
-                type="button"
-                style={styles.realtimeButton}
-                onClick={disconnectQwenRealtime}
-              >
-                断开
-              </button>
-            </div>
           </div>
 
           <p style={styles.realtimeHint}>
