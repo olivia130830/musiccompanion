@@ -5,21 +5,15 @@ import {
 
 import { NextResponse } from "next/server";
 
+import {
+  ACCEPTED_AUDIO_MIME_TYPES,
+} from "@/lib/audio/formats";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_AUDIO_SIZE_BYTES =
   100 * 1024 * 1024;
-
-const ALLOWED_AUDIO_TYPES = [
-  "audio/mpeg",
-  "audio/mp3",
-  "audio/wav",
-  "audio/x-wav",
-  "audio/mp4",
-  "audio/x-m4a",
-  "audio/aac",
-];
 
 interface ErrorResponse {
   error: string;
@@ -104,7 +98,7 @@ export async function POST(
 
             return {
               allowedContentTypes:
-                ALLOWED_AUDIO_TYPES,
+                ACCEPTED_AUDIO_MIME_TYPES,
 
               maximumSizeInBytes:
                 MAX_AUDIO_SIZE_BYTES,

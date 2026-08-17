@@ -30,10 +30,10 @@ V0 是一个完全本地化的原型，验证以下假设：
 - ✅ 音频只在浏览器本地播放，不上传服务器
 
 ### 伙伴评论
-- ✅ 预设时间点出现评论（使用人工数据，非 AI 生成）
-- ✅ 仅在音乐正在播放时触发
-- ✅ 同一评论在单次播放中只出现一次
-- ✅ 每条评论配备"我也觉得"和"我感觉不一样"反馈按钮
+- ✅ 用户回复和主动短评均通过千问 Realtime 生成
+- ✅ 本地音频特征只作为提示词上下文，不在本地生成回复
+- ✅ 评论请求有延迟和冷却控制，避免过快或过密
+- ✅ 每条 AI 评论配备"我也觉得"和"我感觉不一样"反馈按钮
 
 ### 用户互动
 - ✅ 用户可输入即时感受
@@ -86,7 +86,7 @@ V0 是一个完全本地化的原型，验证以下假设：
 - **语言**: TypeScript 5
 - **前端**: React 19
 - **样式**: 普通 CSS（无框架）
-- **音频**: 原生 HTML5 `<audio>` 元素
+- **音频**: Web Audio 播放，本地音频特征分析，必要时服务端转 WAV
 - **构建**: ESLint 检查，npm 脚本
 
 ## 目录结构
@@ -94,22 +94,38 @@ V0 是一个完全本地化的原型，验证以下假设：
 ```
 musiccompanion/
 ├── app/
+│   ├── api/
+│   │   ├── audio/
+│   │   │   ├── analyze/route.ts    # 音频分析接口（当前关闭）
+│   │   │   ├── transcode/route.ts  # 音频转码接口
+│   │   │   └── upload/route.ts     # Blob 上传凭证接口
+│   │   ├── companion-reply/route.ts
+│   │   └── debug/playback-time/route.ts
 │   ├── layout.tsx              # 根布局
 │   ├── page.tsx                # 主页面
 │   └── globals.css             # 全局样式
 ├── components/                 # React 组件
 │   ├── AudioUploader.tsx        # 文件选择
 │   ├── MusicPlayer.tsx          # 播放器
-│   ├── CurrentComment.tsx       # 当前评论展示
 │   ├── ListeningHistory.tsx     # 共同聆听记录
 │   ├── CommentFeedback.tsx      # 评论反馈
 │   └── UserReplyBox.tsx         # 用户回复输入
 ├── hooks/
-│   └── useCommentScheduler.ts   # 评论时间触发逻辑
+│   └── useLocalAudioFeatures.ts # 浏览器本地音频特征分析
+├── lib/
+│   ├── audio/
+│   │   ├── formats.ts           # 音频格式白名单与 MIME 推断
+│   │   ├── pcm16.ts             # PCM16 转换工具
+│   │   └── transcode.ts         # 服务端 afconvert 转码
+│   ├── qwen/
+│   │   └── realtimeClient.ts    # 浏览器端千问 Realtime client
+│   ├── gemini.ts
+│   └── validateAnalysis.ts
+├── server/
+│   └── qwen/
+│       └── realtime-proxy.mjs   # 本地千问 Realtime WebSocket 代理
 ├── types/
 │   └── music.ts                # TypeScript 类型定义
-├── data/
-│   └── demoComments.ts         # 预设评论数据
 ├── utils/
 │   └── formatTime.ts           # 时间格式化工具
 ├── public/                     # 静态资源
@@ -125,34 +141,22 @@ musiccompanion/
 
 ### 何时触发
 
-1. 音乐正在播放（`audio.playing === true`）
-2. 当前时间达到评论预设的 `timeSeconds`（±0.5 秒误差）
-3. 该评论在当前播放会话中尚未被触发过
+1. 用户发送即时回复时，延迟约 2 秒后请求千问
+2. 音乐正在播放且到达主动短评条件时，请求千问生成一句短评
+3. 所有评论请求共享 5 秒冷却，避免短时间连续刷评论
 
 ### 何时不触发
 
-- 音乐暂停时
-- 快进跳过评论时间点后，不补发已错过的评论
-- 倒退到已触发的时间点时，不重复触发
-- 音频时长短于评论预设时间时，不报错
+- 音乐暂停时不触发主动短评
+- 用户拖动进度条时不触发主动短评
+- 已有评论请求排队时，主动短评不会插队
+- 切换歌曲后会清空旧歌曲的排队请求和共同聆听记录
 
-### 防重复机制
+### 生成来源
 
-- 使用 `Set<string>` 记录已触发的评论 ID
-- 不依赖 React 状态更新判断（避免闭包问题）
-- React 重复渲染时不会造成重复触发
-
-### 拖动行为
-
-- 用户拖动进度条后，仅等待当前时间之后的评论
-- 一次 `timeupdate` 事件最多触发一条评论（防批量）
-- 快进和倒退都遵循相同规则
-
-### 换歌重置
-
-- 选择新文件后，清空 `triggeredCommentIds` Set
-- 清空所有用户回复和反馈
-- 清空共同聆听记录
+- 项目已删除旧的本地预设评论链路
+- 页面评论只允许由千问 Realtime 返回后写入共同聆听记录
+- 本地音频分析只生成提示词上下文，不生成最终评论
 
 ## 安全和隐私规则
 
@@ -253,11 +257,6 @@ npm start
    - 本地文件完全由用户控制
    - 隐私优先
 
-4. **为什么评论是预设的？**
-   - V0 验证的是交互体验，不是 AI 能力
-   - 预设数据稳定可测试
-   - 后续可轻松替换为真实 AI 接口
-
 ## 故障排除
 
 ### 问题: 页面加载后没有按钮
@@ -267,10 +266,6 @@ npm start
 ### 问题: 音频无法播放
 **原因**: 浏览器不支持该格式，或者文件损坏
 **解决**: 尝试其他音频格式，检查文件是否完整
-
-### 问题: 评论总是重复出现
-**原因**: `useCommentScheduler` 中已触发集合未正确管理
-**解决**: 检查 Set 的初始化和更新逻辑
 
 ### 问题: 内存持续增长
 **原因**: Object URL 未正确释放
