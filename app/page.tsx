@@ -1472,7 +1472,7 @@ export default function Home() {
   ]);
 
   const handleVoiceStart = async () => {
-    if (!audioFile) return;
+    if (!audioFile) return false;
 
     stopReplyAudio();
     musicPlayerRef.current?.pauseForVoiceRecording();
@@ -1486,6 +1486,7 @@ export default function Home() {
       await prepareReplyAudio();
       const started = await startRecording();
       if (!started) voiceTurnActiveRef.current = false;
+      return started;
     } catch (unknownError) {
       musicPlayerRef.current?.resumeAfterVoiceRecording();
       voiceTurnActiveRef.current = false;
@@ -1494,6 +1495,7 @@ export default function Home() {
           ? unknownError.message
           : "无法开始录音。",
       );
+      return false;
     }
   };
 
@@ -1510,6 +1512,18 @@ export default function Home() {
           ? unknownError.message
           : "无法停止录音。",
       );
+    }
+  };
+
+  const handleVoiceCancel = async () => {
+    try {
+      await stopRecording();
+      clearRecording();
+    } catch {
+      // 手势取消不向用户显示停止录音错误。
+    } finally {
+      musicPlayerRef.current?.resumeAfterVoiceRecording();
+      voiceTurnActiveRef.current = false;
     }
   };
 
@@ -1750,18 +1764,15 @@ export default function Home() {
           inputDeviceLabel={inputDeviceLabel}
           isPlayingReply={isPlayingReply}
           aiVolume={aiReplyVolume}
-          onStartRecording={() => {
-            void handleVoiceStart();
-          }}
-          onStopRecording={() => {
-            void handleVoiceStop();
-          }}
+          onStartRecording={handleVoiceStart}
+          onStopRecording={handleVoiceStop}
+          onCancelRecording={handleVoiceCancel}
           onStopReply={stopReplyAudio}
           onAiVolumeChange={setAiReplyVolume}
         />
 
         <footer style={styles.footer}>
-          当前版本：MediaRecorder 停止录音后自动发送给 AI。
+          当前版本：按住录音，松开发送，上移取消。
         </footer>
       </section>
     </main>

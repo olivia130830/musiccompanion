@@ -821,6 +821,8 @@ input[type="range"]:focus-visible {
 
   font-size: 14px;
   font-weight: 400;
+  touch-action: none;
+  user-select: none;
 
   transition:
     transform 160ms ease,
@@ -851,6 +853,10 @@ input[type="range"]:focus-visible {
 
 .voice-record-button-active {
   background: linear-gradient(135deg, #e85f72, #d84670);
+}
+
+.voice-record-button-cancelling {
+  background: linear-gradient(135deg, #d94747, #b92d49);
 }
 
 .voice-record-status,
