@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   QWEN_AUDIO_CHUNK_BASE64_LENGTH,
   QwenRealtimeClient,
+  type QwenRealtimeClientOptions,
 } from "@/lib/qwen/realtimeClient";
 
 class FakeWebSocket {
@@ -48,7 +49,7 @@ class FakeWebSocket {
   }
 }
 
-function createReadyClient() {
+function createReadyClient(options: QwenRealtimeClientOptions = {}) {
   const holder: { current: FakeWebSocket | null } = {
     current: null,
   };
@@ -61,6 +62,7 @@ function createReadyClient() {
   } as unknown as typeof WebSocket;
 
   const client = new QwenRealtimeClient({
+    ...options,
     url: "ws://test",
   });
   client.connect();
@@ -156,6 +158,62 @@ describe("Qwen audio turns", () => {
     expect(sessionUpdate.session.input_audio_transcription).toEqual({
       model: "qwen3-asr-flash-realtime",
     });
+  });
+
+  it("streams a continuous voice call with server VAD", () => {
+    let speechStarted = 0;
+    let speechStopped = 0;
+    let transcriptKind: string | null = null;
+    const { client, socket } = createReadyClient({
+      onSpeechStarted: () => {
+        speechStarted += 1;
+      },
+      onSpeechStopped: () => {
+        speechStopped += 1;
+      },
+      onInputTranscriptDone: (_text, kind) => {
+        transcriptKind = kind;
+      },
+    });
+
+    expect(client.startVoiceCall("answer quickly")).toBe(true);
+    expect(client.isReady()).toBe(false);
+
+    const sessionUpdate = socket.events().at(-1);
+    expect(sessionUpdate.session.turn_detection).toEqual({
+      type: "server_vad",
+      threshold: 0.5,
+      silence_duration_ms: 400,
+    });
+    expect(sessionUpdate.session.input_audio_transcription).toEqual({
+      model: "qwen3-asr-flash-realtime",
+    });
+
+    socket.message({ type: "session.updated" });
+    expect(client.appendVoiceAudio("live-microphone-frame")).toBe(true);
+    expect(socket.events().at(-1)).toEqual({
+      type: "input_audio_buffer.append",
+      audio: "live-microphone-frame",
+    });
+    expect(
+      socket.events().filter((event) => event.type === "response.create"),
+    ).toHaveLength(0);
+
+    socket.message({ type: "input_audio_buffer.speech_started" });
+    socket.message({ type: "input_audio_buffer.speech_stopped" });
+    socket.message({
+      type: "input_audio_buffer.committed",
+      item_id: "voice-item",
+    });
+    socket.message({
+      type: "conversation.item.input_audio_transcription.completed",
+      item_id: "voice-item",
+      transcript: "你好",
+    });
+
+    expect(speechStarted).toBe(1);
+    expect(speechStopped).toBe(1);
+    expect(transcriptKind).toBe("voice");
   });
 
   it("splits audio into frames safely below Qwen's limit", () => {

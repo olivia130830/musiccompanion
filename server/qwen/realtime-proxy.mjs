@@ -53,23 +53,6 @@ function safeSend(socket, data) {
   socket.send(data);
 }
 
-function describeBrowserMessage(text) {
-  try {
-    const event = JSON.parse(text);
-
-    if (event.type === "input_audio_buffer.append") {
-      const audioLength =
-        typeof event.audio === "string" ? event.audio.length : 0;
-
-      return `[Browser -> Qwen] microphone audioBase64Length=${audioLength}`;
-    }
-
-    return `[Browser -> Qwen RAW] ${text}`;
-  } catch {
-    return `[Browser -> Qwen RAW] ${text}`;
-  }
-}
-
 wss.on("connection", (browserSocket) => {
   console.log("[Proxy] 浏览器已连接。");
 
@@ -91,8 +74,6 @@ wss.on("connection", (browserSocket) => {
 
   qwenSocket.on("message", (data) => {
     const text = data.toString();
-
-    console.log(`[Qwen RAW] ${text}`);
 
     let event = null;
 
@@ -161,8 +142,6 @@ wss.on("connection", (browserSocket) => {
 
   browserSocket.on("message", (data) => {
     const text = data.toString();
-
-    console.log(describeBrowserMessage(text));
 
     try {
       JSON.parse(text);

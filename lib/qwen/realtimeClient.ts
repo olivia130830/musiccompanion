@@ -18,6 +18,8 @@ export type QwenRealtimeClientOptions = {
   onAudioDelta?: (audioBase64: string) => void;
   onAudioDone?: () => void;
   onResponseDone?: () => void;
+  onSpeechStarted?: () => void;
+  onSpeechStopped?: () => void;
   onInputTranscriptDone?: (
     text: string,
     inputKind: QwenAudioInputKind | null,
@@ -185,6 +187,8 @@ export class QwenRealtimeClient {
 
   private hasPendingStreamAudio = false;
 
+  private liveVoiceMode = false;
+
   private pendingInputKinds: QwenAudioInputKind[] = [];
 
   private readonly inputKindByItemId =
@@ -262,6 +266,28 @@ export class QwenRealtimeClient {
 
     this.appendAudio(audioBase64);
     this.hasPendingStreamAudio = true;
+    return true;
+  }
+
+  public startVoiceCall(instructions: string) {
+    if (!this.isReady()) return false;
+
+    this.liveVoiceMode = true;
+    this.isConfigured = false;
+    this.sendSessionUpdate(instructions, true, {
+      type: "server_vad",
+      threshold: 0.5,
+      silence_duration_ms: 400,
+    });
+    return true;
+  }
+
+  public appendVoiceAudio(audioBase64: string) {
+    if (!audioBase64 || !this.liveVoiceMode || !this.isReady()) {
+      return false;
+    }
+
+    this.appendAudio(audioBase64);
     return true;
   }
 
@@ -409,11 +435,17 @@ export class QwenRealtimeClient {
     this.pendingInputKinds = [];
     this.inputKindByItemId.clear();
     this.hasPendingStreamAudio = false;
+    this.liveVoiceMode = false;
   }
 
   private sendSessionUpdate(
     instructions = DEFAULT_INSTRUCTIONS,
     enableInputTranscription = false,
+    turnDetection: null | {
+      type: "server_vad";
+      threshold: number;
+      silence_duration_ms: number;
+    } = null,
   ) {
     this.sendEvent({
       type: "session.update",
@@ -429,7 +461,7 @@ export class QwenRealtimeClient {
               model: "qwen3-asr-flash-realtime",
             }
           : null,
-        turn_detection: null,
+        turn_detection: turnDetection,
         instructions,
       },
     });
@@ -485,13 +517,25 @@ export class QwenRealtimeClient {
       return;
     }
 
+    if (eventType === "input_audio_buffer.speech_started") {
+      this.options.onSpeechStarted?.();
+      return;
+    }
+
+    if (eventType === "input_audio_buffer.speech_stopped") {
+      this.options.onSpeechStopped?.();
+      return;
+    }
+
     if (eventType === "input_audio_buffer.committed") {
       const record = getRecord(event);
       const itemId =
         record && typeof record.item_id === "string"
           ? record.item_id
           : "";
-      const inputKind = this.pendingInputKinds.shift() ?? null;
+      const inputKind =
+        this.pendingInputKinds.shift() ??
+        (this.liveVoiceMode ? "voice" : null);
 
       if (itemId && inputKind) {
         this.inputKindByItemId.set(itemId, inputKind);
