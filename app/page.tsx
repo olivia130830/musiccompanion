@@ -33,6 +33,10 @@ import UserReplyBox from "@/components/UserReplyBox";
 import { useLocalAudioFeatures } from "@/hooks/useLocalAudioFeatures";
 import { usePcmAudioPlayer } from "@/hooks/usePcmAudioPlayer";
 import { useRealtimeMicrophone } from "@/hooks/useRealtimeMicrophone";
+import {
+  useRealtimeListeningSource,
+  type LiveListeningStatus,
+} from "@/hooks/useRealtimeListeningSource";
 
 import type {
   LocalAudioFeatures,
@@ -60,6 +64,11 @@ type QwenMomentStatus =
   | "error";
 
 type QwenPromptKind = "user_reply" | "proactive_comment";
+
+type ListeningInputMode =
+  | "file"
+  | "local_speaker"
+  | "nearby_speaker";
 
 type PendingQwenPrompt = {
   prompt: string;
@@ -421,6 +430,7 @@ function getHumanReplyGuide(
 function buildQwenPrompt({
   kind,
   audioFile,
+  listeningSource,
   playback,
   messages,
   localAudioFeatures,
@@ -428,7 +438,8 @@ function buildQwenPrompt({
   isRevisitedSegment = false,
 }: {
   kind: QwenPromptKind;
-  audioFile: File;
+  audioFile: File | null;
+  listeningSource?: ListeningInputMode;
   playback: PlaybackSnapshot;
   messages: ListeningMessage[];
   localAudioFeatures: LocalAudioFeatures | null;
@@ -440,9 +451,9 @@ function buildQwenPrompt({
     ? formatPlaybackTime(playback.duration)
     : "未知";
   const recentMessages = messages.slice(-10);
-  const fileListeningHint = getAudioFileListeningHint(
-    audioFile.name,
-  );
+  const fileListeningHint = audioFile
+    ? getAudioFileListeningHint(audioFile.name)
+    : "";
   const history =
     recentMessages.length > 0
       ? recentMessages
@@ -480,12 +491,23 @@ function buildQwenPrompt({
     "生成前必须逐条对照最近你说过的话：不要重复同一个声音对象、同一种变化判断、同一个形容词或同一个比喻；例如已经说过“像拉长的泡泡”，后续就不能换几个字继续说泡泡或拉长感，应改看节奏、空间、音色、结构或情绪中的其他角度。",
     "如果有明确线索表明音频经过倒放、变速或其他特殊处理，可以直接说“这个是倒放吧！”这类简短自然的判断，不必强行套用完整评论结构；没有线索时不要猜。",
     getHumanReplyGuide(kind),
-    `歌曲文件名：${audioFile.name}`,
+    `当前听歌来源：${
+      listeningSource === "local_speaker"
+        ? "本机扬声器正在外放的音乐，由麦克风收音"
+        : listeningSource === "nearby_speaker"
+          ? "手机、音箱或收音机等其他设备外放的音乐，由麦克风收音"
+          : "页面内上传的音乐文件"
+    }`,
+    ...(audioFile ? [`歌曲文件名：${audioFile.name}`] : []),
     ...(fileListeningHint
       ? [`文件线索：${fileListeningHint}`]
       : []),
-    `文件格式：${inferAudioMimeType(audioFile) || getFileExtension(audioFile.name) || "未知"}`,
-    `文件大小：${formatFileSize(audioFile.size)}`,
+    ...(audioFile
+      ? [
+          `文件格式：${inferAudioMimeType(audioFile) || getFileExtension(audioFile.name) || "未知"}`,
+          `文件大小：${formatFileSize(audioFile.size)}`,
+        ]
+      : []),
     `当前播放：${currentTime} / ${duration}`,
     `播放状态：${playback.isPlaying ? "正在播放" : "暂停"}`,
     `播放上下文：${playbackContext}`,
@@ -539,6 +561,17 @@ export default function Home() {
 
   const [voiceInputError, setVoiceInputError] = useState("");
 
+  const [listeningInputMode, setListeningInputMode] =
+    useState<ListeningInputMode>("file");
+
+  const [isVoiceCallConnected, setIsVoiceCallConnected] =
+    useState(false);
+
+  const [isSpeakerMuted, setIsSpeakerMuted] = useState(false);
+
+  const [isVoiceCallDismissed, setIsVoiceCallDismissed] =
+    useState(false);
+
   const qwenClientRef = useRef<QwenRealtimeClient | null>(
     null,
   );
@@ -552,6 +585,16 @@ export default function Home() {
   const voiceSpeechActiveRef = useRef(false);
 
   const autoStartedVoiceTrackKeyRef = useRef("");
+
+  const liveListeningStartedAtRef = useRef(0);
+
+  const listeningInputModeRef =
+    useRef<ListeningInputMode>("file");
+
+  const liveListeningStatusRef =
+    useRef<LiveListeningStatus>("idle");
+
+  const lastAiReplyVolumeRef = useRef(1);
 
   const qwenReadyRef = useRef(false);
 
@@ -614,10 +657,23 @@ export default function Home() {
     status: voiceRecorderStatus,
     error: voiceRecorderError,
     inputDeviceLabel,
+    isMuted: isMicrophoneMuted,
+    setMuted: setMicrophoneMuted,
     start: startRealtimeMicrophone,
     stop: stopRealtimeMicrophone,
   } = useRealtimeMicrophone((audioBase64) => {
     qwenVoiceClientRef.current?.appendVoiceAudio(audioBase64);
+  });
+
+  const {
+    status: liveListeningStatus,
+    error: liveListeningError,
+    label: liveListeningLabel,
+    setMuted: setListeningMicrophoneMuted,
+    start: startLiveListening,
+    stop: stopLiveListening,
+  } = useRealtimeListeningSource((audioBase64) => {
+    qwenClientRef.current?.appendMusicAudio(audioBase64);
   });
 
   const {
@@ -652,10 +708,22 @@ export default function Home() {
   }, [audioFile]);
 
   const hasAudio = Boolean(audioFile);
+  const hasActiveListeningInput =
+    listeningInputMode === "file"
+      ? hasAudio
+      : liveListeningStatus === "listening";
 
   useEffect(() => {
     playbackRef.current = playback;
   }, [playback]);
+
+  useEffect(() => {
+    listeningInputModeRef.current = listeningInputMode;
+  }, [listeningInputMode]);
+
+  useEffect(() => {
+    liveListeningStatusRef.current = liveListeningStatus;
+  }, [liveListeningStatus]);
 
   const handlePlaybackStateChange = useCallback(
     (nextPlayback: PlaybackSnapshot) => {
@@ -679,7 +747,10 @@ export default function Home() {
 
   const handlePlaybackAudioChunk = useCallback(
     (samples: Float32Array, sampleRate: number) => {
-      if (!qwenReadyRef.current) {
+      if (
+        listeningInputMode !== "file" ||
+        !qwenReadyRef.current
+      ) {
         return;
       }
 
@@ -696,7 +767,7 @@ export default function Home() {
         float32ToPcm16Base64(resampled),
       );
     },
-    [],
+    [listeningInputMode],
   );
 
   useEffect(() => {
@@ -717,8 +788,9 @@ export default function Home() {
       qwenVoiceClientRef.current = null;
       voiceCallActiveRef.current = false;
       void stopRealtimeMicrophone();
+      void stopLiveListening();
     };
-  }, [stopRealtimeMicrophone]);
+  }, [stopLiveListening, stopRealtimeMicrophone]);
 
   const addCompanionMessage = useCallback(
     (
@@ -847,7 +919,15 @@ export default function Home() {
       onTextDelta: () => {},
 
       onTextDone: (text) => {
-        if (!waitingForQwenResponseRef.current) {
+        const inputMode = listeningInputModeRef.current;
+        const isLiveListening =
+          inputMode !== "file" &&
+          liveListeningStatusRef.current === "listening";
+
+        if (
+          !waitingForQwenResponseRef.current &&
+          !isLiveListening
+        ) {
           console.warn(
             "[MusicCompanion] Ignored Qwen text.done without an active outbound prompt",
             text,
@@ -858,6 +938,7 @@ export default function Home() {
         if (
           activeQwenPromptKindRef.current ===
             "proactive_comment" &&
+          inputMode === "file" &&
           !playbackRef.current.isPlaying
         ) {
           waitingForQwenResponseRef.current = false;
@@ -870,7 +951,14 @@ export default function Home() {
           text,
           "qwen-realtime",
           qwenResponseMusicTimeRef.current ??
-            playbackRef.current.currentTime,
+            (isLiveListening
+              ? Math.max(
+                  0,
+                  (Date.now() -
+                    liveListeningStartedAtRef.current) /
+                    1000,
+                )
+              : playbackRef.current.currentTime),
         );
         qwenResponseMusicTimeRef.current = null;
       },
@@ -962,10 +1050,15 @@ export default function Home() {
       prompt,
       kind,
     }: PendingQwenPrompt) => {
+      const isListeningNow =
+        listeningInputMode === "file"
+          ? Boolean(audioFile) &&
+            playbackRef.current.isPlaying &&
+            !playbackRef.current.isSeeking
+          : liveListeningStatus === "listening";
       if (
         kind === "proactive_comment" &&
-        (!playbackRef.current.isPlaying ||
-          playbackRef.current.isSeeking ||
+        (!isListeningNow ||
           waitingForQwenResponseRef.current ||
           replyAudioPlayingRef.current)
       ) {
@@ -985,25 +1078,18 @@ export default function Home() {
           throw new Error("Realtime 连接超时，请重试。");
         }
 
-        if (
-          !audioFile ||
-          voiceTurnActiveRef.current ||
-          !playbackRef.current.isPlaying ||
-          playbackRef.current.isSeeking
-        ) {
+        if (voiceTurnActiveRef.current || !isListeningNow) {
           return false;
         }
 
         const liveMusicTimeSeconds =
-          playbackRef.current.currentTime;
-
-        if (
-          voiceTurnActiveRef.current ||
-          !playbackRef.current.isPlaying ||
-          playbackRef.current.isSeeking
-        ) {
-          return false;
-        }
+          listeningInputMode === "file"
+            ? playbackRef.current.currentTime
+            : Math.max(
+                0,
+                (Date.now() - liveListeningStartedAtRef.current) /
+                  1000,
+              );
 
         waitingForQwenResponseRef.current = true;
         activeQwenPromptKindRef.current = kind;
@@ -1051,7 +1137,12 @@ export default function Home() {
         return false;
       }
     },
-    [audioFile, connectQwenRealtime],
+    [
+      audioFile,
+      connectQwenRealtime,
+      listeningInputMode,
+      liveListeningStatus,
+    ],
   );
 
   const schedulePromptToQwen = useCallback(
@@ -1068,11 +1159,13 @@ export default function Home() {
       minimumDelayMs?: number;
       replaceScheduled?: boolean;
     }) => {
-      if (
-        kind === "proactive_comment" &&
-        (!playbackRef.current.isPlaying ||
-          playbackRef.current.isSeeking)
-      ) {
+      const isListeningNow =
+        listeningInputMode === "file"
+          ? Boolean(audioFile) &&
+            playbackRef.current.isPlaying &&
+            !playbackRef.current.isSeeking
+          : liveListeningStatus === "listening";
+      if (kind === "proactive_comment" && !isListeningNow) {
         return false;
       }
 
@@ -1111,11 +1204,16 @@ export default function Home() {
         scheduledQwenPromptTimeoutRef.current = null;
         scheduledQwenPromptKindRef.current = null;
 
+        const isStillListening =
+          listeningInputMode === "file"
+            ? Boolean(audioFile) &&
+              playbackRef.current.isPlaying &&
+              !playbackRef.current.isSeeking
+            : liveListeningStatus === "listening";
+
         if (
           kind === "proactive_comment" &&
-          (!audioFile ||
-            !playbackRef.current.isPlaying ||
-            playbackRef.current.isSeeking ||
+          (!isStillListening ||
             voiceTurnActiveRef.current ||
             waitingForQwenResponseRef.current ||
             replyAudioPlayingRef.current)
@@ -1130,16 +1228,35 @@ export default function Home() {
         const livePlayback = playbackRef.current;
         const liveMusicTimeSeconds =
           kind === "proactive_comment"
-            ? livePlayback.currentTime
+            ? listeningInputMode === "file"
+              ? livePlayback.currentTime
+              : Math.max(
+                  0,
+                  (Date.now() - liveListeningStartedAtRef.current) /
+                    1000,
+                )
             : musicTimeSeconds;
+        const promptPlayback: PlaybackSnapshot =
+          listeningInputMode === "file"
+            ? livePlayback
+            : {
+                currentTime: liveMusicTimeSeconds,
+                duration: 0,
+                isPlaying: true,
+                isSeeking: false,
+              };
         const livePrompt =
-          kind === "proactive_comment" && audioFile
+          kind === "proactive_comment"
             ? buildQwenPrompt({
                 kind,
                 audioFile,
-                playback: livePlayback,
+                listeningSource: listeningInputMode,
+                playback: promptPlayback,
                 messages: listeningMessagesRef.current,
-                localAudioFeatures,
+                localAudioFeatures:
+                  listeningInputMode === "file"
+                    ? localAudioFeatures
+                    : null,
                 isRevisitedSegment:
                   revisitedUntilSecondRef.current > 0 &&
                   Math.floor(livePlayback.currentTime) <=
@@ -1157,7 +1274,13 @@ export default function Home() {
 
       return true;
     },
-    [audioFile, localAudioFeatures, sendPromptToQwen],
+    [
+      audioFile,
+      listeningInputMode,
+      liveListeningStatus,
+      localAudioFeatures,
+      sendPromptToQwen,
+    ],
   );
 
   const cancelScheduledProactiveComment =
@@ -1194,6 +1317,7 @@ export default function Home() {
 
   useEffect(() => {
     if (
+      listeningInputMode !== "file" ||
       playback.isPlaying ||
       voiceTurnActiveRef.current
     ) {
@@ -1206,6 +1330,7 @@ export default function Home() {
   }, [
     cancelActiveProactiveComment,
     cancelScheduledProactiveComment,
+    listeningInputMode,
     playback.isPlaying,
   ]);
 
@@ -1227,11 +1352,15 @@ export default function Home() {
     setVoiceInputError("");
     stopReplyAudio();
     void stopRealtimeMicrophone();
+    void stopLiveListening();
     qwenVoiceClientRef.current?.disconnect();
     qwenVoiceClientRef.current = null;
     voiceCallActiveRef.current = false;
+    setIsVoiceCallConnected(false);
+    setIsVoiceCallDismissed(false);
     voiceSpeechActiveRef.current = false;
     autoStartedVoiceTrackKeyRef.current = "";
+    liveListeningStartedAtRef.current = 0;
     resetLocalAudioFeatures();
 
     lastRealtimeCommentSecondRef.current = 0;
@@ -1248,7 +1377,12 @@ export default function Home() {
     voiceInputMusicTimeRef.current = null;
     pendingVoiceHistoryMessageIdRef.current = null;
     voiceTurnActiveRef.current = false;
-  }, [resetLocalAudioFeatures, stopRealtimeMicrophone, stopReplyAudio]);
+  }, [
+    resetLocalAudioFeatures,
+    stopLiveListening,
+    stopRealtimeMicrophone,
+    stopReplyAudio,
+  ]);
 
   const transcodeAudioFile = async (file: File) => {
     const formData = new FormData();
@@ -1295,6 +1429,7 @@ export default function Home() {
     }
 
     resetListeningSession();
+    setListeningInputMode("file");
 
     const shouldTranscode =
       getFileExtension(file.name) === ".m4a" &&
@@ -1335,11 +1470,13 @@ export default function Home() {
   };
 
   useEffect(() => {
-    if (!audioFile) {
-      return;
-    }
-
-    if (!playback.isPlaying || playback.isSeeking) {
+    const shouldConnect =
+      listeningInputMode === "file"
+        ? Boolean(audioFile) &&
+          playback.isPlaying &&
+          !playback.isSeeking
+        : liveListeningStatus === "listening";
+    if (!shouldConnect) {
       cancelScheduledProactiveComment();
       return;
     }
@@ -1368,13 +1505,15 @@ export default function Home() {
     audioFile,
     cancelScheduledProactiveComment,
     connectQwenRealtime,
+    listeningInputMode,
+    liveListeningStatus,
     playback.isPlaying,
     playback.isSeeking,
     qwenRealtimeStatus,
   ]);
 
   useEffect(() => {
-    if (!audioFile) {
+    if (!audioFile || listeningInputMode !== "file") {
       return;
     }
 
@@ -1453,6 +1592,7 @@ export default function Home() {
       prompt: buildQwenPrompt({
         kind: "proactive_comment",
         audioFile,
+        listeningSource: "file",
         playback,
         messages: listeningMessagesRef.current,
         localAudioFeatures,
@@ -1471,10 +1611,12 @@ export default function Home() {
     cancelScheduledProactiveComment,
     schedulePromptToQwen,
     localAudioFeatures,
+    listeningInputMode,
   ]);
 
   const startVoiceCall = useCallback(async () => {
-    if (!audioFile || voiceCallActiveRef.current) return true;
+    if (!hasActiveListeningInput) return false;
+    if (voiceCallActiveRef.current) return true;
     if (qwenVoiceClientRef.current) return false;
 
     setVoiceInputError("");
@@ -1484,7 +1626,14 @@ export default function Home() {
       onSpeechStarted: () => {
         voiceSpeechActiveRef.current = true;
         voiceTurnActiveRef.current = true;
-        voiceInputMusicTimeRef.current = playbackRef.current.currentTime;
+        voiceInputMusicTimeRef.current =
+          listeningInputMode === "file"
+            ? playbackRef.current.currentTime
+            : Math.max(
+                0,
+                (Date.now() - liveListeningStartedAtRef.current) /
+                  1000,
+              );
         cancelScheduledProactiveComment();
 
         if (waitingForQwenResponseRef.current) {
@@ -1548,6 +1697,7 @@ export default function Home() {
         if (qwenVoiceClientRef.current !== client) return;
         qwenVoiceClientRef.current = null;
         voiceCallActiveRef.current = false;
+        setIsVoiceCallConnected(false);
         voiceSpeechActiveRef.current = false;
         voiceTurnActiveRef.current = false;
         setIsSendingVoice(false);
@@ -1570,6 +1720,7 @@ export default function Home() {
       const instructions = buildQwenPrompt({
         kind: "user_reply",
         audioFile,
+        listeningSource: listeningInputMode,
         playback: playbackRef.current,
         messages: listeningMessagesRef.current,
         localAudioFeatures,
@@ -1590,12 +1741,14 @@ export default function Home() {
 
       voiceCallActiveRef.current = true;
       await startRealtimeMicrophone();
+      setIsVoiceCallConnected(true);
       return true;
     } catch (unknownError) {
       if (qwenVoiceClientRef.current === client) {
         qwenVoiceClientRef.current = null;
       }
       voiceCallActiveRef.current = false;
+      setIsVoiceCallConnected(false);
       client.disconnect();
       const message =
         unknownError instanceof Error
@@ -1612,6 +1765,8 @@ export default function Home() {
     beginReplyAudio,
     cancelScheduledProactiveComment,
     finishReplyAudio,
+    hasActiveListeningInput,
+    listeningInputMode,
     localAudioFeatures,
     prepareReplyAudio,
     startRealtimeMicrophone,
@@ -1623,6 +1778,8 @@ export default function Home() {
   useEffect(() => {
     if (
       !audioFile ||
+      listeningInputMode !== "file" ||
+      isVoiceCallDismissed ||
       autoStartedVoiceTrackKeyRef.current === trackKey
     ) {
       return;
@@ -1630,9 +1787,160 @@ export default function Home() {
 
     autoStartedVoiceTrackKeyRef.current = trackKey;
     void startVoiceCall();
-  }, [audioFile, startVoiceCall, trackKey]);
+  }, [
+    audioFile,
+    isVoiceCallDismissed,
+    listeningInputMode,
+    startVoiceCall,
+    trackKey,
+  ]);
+
+  useEffect(() => {
+    if (
+      listeningInputMode === "file" ||
+      isVoiceCallDismissed ||
+      liveListeningStatus !== "listening"
+    ) {
+      return;
+    }
+    liveListeningStartedAtRef.current = Date.now();
+    const connectTimeout = setTimeout(() => {
+      void startVoiceCall();
+    }, 0);
+    return () => clearTimeout(connectTimeout);
+  }, [
+    isVoiceCallDismissed,
+    listeningInputMode,
+    liveListeningStatus,
+    startVoiceCall,
+  ]);
+
+  const handleListeningInputChange = async (
+    nextMode: ListeningInputMode,
+  ) => {
+    cancelScheduledProactiveComment();
+    cancelActiveProactiveComment();
+    qwenClientRef.current?.clearInputAudio();
+    setIsVoiceCallDismissed(false);
+    setListeningInputMode(nextMode);
+
+    if (nextMode === "file") {
+      await stopLiveListening();
+      return;
+    }
+
+    if (
+      listeningInputMode !== "file" &&
+      liveListeningStatus === "listening"
+    ) {
+      return;
+    }
+
+    void prepareReplyAudio();
+    connectQwenRealtime();
+    try {
+      await startLiveListening();
+    } catch {
+      // 采集 hook 已提供可直接显示的错误信息。
+    }
+  };
+
+  useEffect(() => {
+    if (
+      listeningInputMode === "file" ||
+      liveListeningStatus !== "listening"
+    ) {
+      return;
+    }
+
+    const requestComment = () => {
+      const elapsedSeconds = Math.max(
+        0,
+        (Date.now() - liveListeningStartedAtRef.current) / 1000,
+      );
+      const livePlayback: PlaybackSnapshot = {
+        currentTime: elapsedSeconds,
+        duration: 0,
+        isPlaying: true,
+        isSeeking: false,
+      };
+      schedulePromptToQwen({
+        prompt: buildQwenPrompt({
+          kind: "proactive_comment",
+          audioFile: null,
+          listeningSource: listeningInputMode,
+          playback: livePlayback,
+          messages: listeningMessagesRef.current,
+          localAudioFeatures: null,
+        }),
+        kind: "proactive_comment",
+        musicTimeSeconds: elapsedSeconds,
+        replaceScheduled: false,
+      });
+    };
+
+    const firstCommentTimeout = setTimeout(requestComment, 8000);
+    const commentInterval = setInterval(requestComment, 18000);
+    return () => {
+      clearTimeout(firstCommentTimeout);
+      clearInterval(commentInterval);
+    };
+  }, [
+    listeningInputMode,
+    liveListeningStatus,
+    schedulePromptToQwen,
+  ]);
+
+  const handleToggleMicrophone = () => {
+    const nextMuted = !isMicrophoneMuted;
+    setMicrophoneMuted(nextMuted);
+    setListeningMicrophoneMuted(nextMuted);
+    if (nextMuted) {
+      cancelScheduledProactiveComment();
+      cancelActiveProactiveComment();
+      qwenClientRef.current?.clearInputAudio();
+      qwenVoiceClientRef.current?.clearInputAudio();
+    }
+  };
+
+  const handleToggleSpeaker = () => {
+    if (isSpeakerMuted) {
+      const restoredVolume = Math.max(
+        0.05,
+        lastAiReplyVolumeRef.current,
+      );
+      setAiReplyVolume(restoredVolume);
+      setIsSpeakerMuted(false);
+      return;
+    }
+    if (aiReplyVolume > 0) {
+      lastAiReplyVolumeRef.current = aiReplyVolume;
+    }
+    setAiReplyVolume(0);
+    setIsSpeakerMuted(true);
+  };
+
+  const handleAiVolumeChange = (volume: number) => {
+    setAiReplyVolume(volume);
+    setIsSpeakerMuted(volume === 0);
+    if (volume > 0) lastAiReplyVolumeRef.current = volume;
+  };
+
+  const handleHangUp = async () => {
+    qwenVoiceClientRef.current?.disconnect();
+    qwenVoiceClientRef.current = null;
+    voiceCallActiveRef.current = false;
+    voiceSpeechActiveRef.current = false;
+    voiceTurnActiveRef.current = false;
+    setIsVoiceCallConnected(false);
+    setIsVoiceCallDismissed(true);
+    setIsSendingVoice(false);
+    setCompanionReplyStatus("idle");
+    await stopRealtimeMicrophone();
+  };
 
   const handleVoiceStart = async () => {
+    setIsVoiceCallDismissed(false);
     await startVoiceCall();
     return false;
   };
@@ -1689,6 +1997,52 @@ export default function Home() {
             onFileSelect={handleFileSelect}
           />
 
+          <div className="listening-source-control">
+            <p className="listening-source-label">AI 听音乐的方式</p>
+            <div className="listening-source-options" role="group" aria-label="选择 AI 的音乐输入来源">
+              {(
+                [
+                  ["file", "上传音乐", "页面内播放"],
+                  ["local_speaker", "本机外放", "这台电脑播放"],
+                  ["nearby_speaker", "其他设备", "手机·音箱·收音机"],
+                ] as const
+              ).map(([mode, label, detail]) => (
+                <button
+                  key={mode}
+                  type="button"
+                  className={`listening-source-button${listeningInputMode === mode ? " listening-source-button-active" : ""}`}
+                  aria-pressed={listeningInputMode === mode}
+                  onClick={() => void handleListeningInputChange(mode)}
+                >
+                  <span className="listening-source-button-title">{label}</span>
+                  <span className="listening-source-button-detail">{detail}</span>
+                </button>
+              ))}
+            </div>
+            <p className="listening-source-help" aria-live="polite">
+              {listeningInputMode === "file"
+                ? audioFile
+                  ? `AI 正在听页面内的 ${audioFile.name}`
+                  : "上传音乐后，AI 会跟随页面播放器一起听。"
+                : liveListeningStatus === "listening"
+                  ? `正在通过 ${liveListeningLabel} 听${
+                      listeningInputMode === "local_speaker"
+                        ? "这台电脑外放的音乐"
+                        : "其他设备外放的音乐"
+                    }。`
+                  : liveListeningStatus === "requesting_permission"
+                    ? "正在连接麦克风…"
+                    : listeningInputMode === "local_speaker"
+                      ? "用这台电脑的扬声器播放音乐，AI 会通过麦克风和你一起听。"
+                      : "用手机、音箱或收音机外放音乐，AI 会通过麦克风和你一起听。"}
+            </p>
+            {listeningInputMode !== "file" && liveListeningError && (
+              <p className="voice-record-error" role="alert">
+                {liveListeningError}
+              </p>
+            )}
+          </div>
+
           {audioFileError && (
             <p style={styles.uploadError}>
               {audioFileError}
@@ -1720,31 +2074,48 @@ export default function Home() {
             </p>
           )}
 
-          {hasAudio && (
+          {hasActiveListeningInput && (
             <button
               type="button"
               style={styles.manualRealtimeButton}
-              disabled={!playback.isPlaying || playback.isSeeking}
+              disabled={
+                listeningInputMode === "file" &&
+                (!playback.isPlaying || playback.isSeeking)
+              }
               onClick={() => {
-                if (
-                  !audioFile ||
-                  !playbackRef.current.isPlaying ||
-                  playbackRef.current.isSeeking
-                ) {
+                const isFileInput = listeningInputMode === "file";
+                if (isFileInput && !audioFile) {
                   return;
                 }
+                const elapsedSeconds = isFileInput
+                  ? playbackRef.current.currentTime
+                  : Math.max(
+                      0,
+                      (Date.now() - liveListeningStartedAtRef.current) /
+                        1000,
+                    );
+                const currentPlayback = isFileInput
+                  ? playbackRef.current
+                  : {
+                      currentTime: elapsedSeconds,
+                      duration: 0,
+                      isPlaying: true,
+                      isSeeking: false,
+                    };
 
                 schedulePromptToQwen({
                   prompt: buildQwenPrompt({
                     kind: "proactive_comment",
                     audioFile,
-                    playback: playbackRef.current,
+                    listeningSource: listeningInputMode,
+                    playback: currentPlayback,
                     messages: listeningMessagesRef.current,
-                    localAudioFeatures,
+                    localAudioFeatures: isFileInput
+                      ? localAudioFeatures
+                      : null,
                   }),
                   kind: "proactive_comment",
-                  musicTimeSeconds:
-                    playbackRef.current.currentTime,
+                  musicTimeSeconds: elapsedSeconds,
                   replaceScheduled: false,
                 });
               }}
@@ -1769,7 +2140,7 @@ export default function Home() {
 
         <ListeningHistory messages={listeningMessages} />
 
-        {hasAudio && (
+        {hasActiveListeningInput && (
           <div
             style={styles.companionReplyStatus}
             aria-live="polite"
@@ -1786,7 +2157,7 @@ export default function Home() {
 
         <UserReplyBox
           key={`reply-box-${trackKey}`}
-          disabled={!audioFile}
+          disabled={!hasActiveListeningInput}
           status={
             isPlayingReply
               ? "speaking"
@@ -1796,17 +2167,23 @@ export default function Home() {
           }
           error={voiceInputError || voiceRecorderError}
           inputDeviceLabel={inputDeviceLabel}
+          isMicrophoneMuted={isMicrophoneMuted}
+          isSpeakerMuted={isSpeakerMuted}
+          isCallConnected={isVoiceCallConnected}
           isPlayingReply={isPlayingReply}
           aiVolume={aiReplyVolume}
           onStartRecording={handleVoiceStart}
           onStopRecording={() => {}}
           onCancelRecording={() => {}}
+          onToggleMicrophone={handleToggleMicrophone}
+          onToggleSpeaker={handleToggleSpeaker}
+          onHangUp={handleHangUp}
           onStopReply={stopReplyAudio}
-          onAiVolumeChange={setAiReplyVolume}
+          onAiVolumeChange={handleAiVolumeChange}
         />
 
         <footer style={styles.footer}>
-          当前版本：按住录音，松开发送，上移取消。
+          AI 可以听页面音乐或外放音乐；通话麦克风可随时关闭。
         </footer>
       </section>
     </main>

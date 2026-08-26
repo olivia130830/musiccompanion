@@ -20,11 +20,17 @@ interface UserReplyBoxProps {
   status: VoiceInputStatus;
   error: string;
   inputDeviceLabel?: string;
+  isMicrophoneMuted: boolean;
+  isSpeakerMuted: boolean;
+  isCallConnected: boolean;
   isPlayingReply: boolean;
   aiVolume: number;
   onStartRecording: () => Promise<boolean>;
   onStopRecording: () => void | Promise<void>;
   onCancelRecording: () => void | Promise<void>;
+  onToggleMicrophone: () => void;
+  onToggleSpeaker: () => void;
+  onHangUp: () => void | Promise<void>;
   onStopReply: () => void;
   onAiVolumeChange: (volume: number) => void;
 }
@@ -58,11 +64,17 @@ export default function UserReplyBox({
   status,
   error,
   inputDeviceLabel,
+  isMicrophoneMuted,
+  isSpeakerMuted,
+  isCallConnected,
   isPlayingReply,
   aiVolume,
   onStartRecording,
   onStopRecording,
   onCancelRecording,
+  onToggleMicrophone,
+  onToggleSpeaker,
+  onHangUp,
   onStopReply,
   onAiVolumeChange,
 }: UserReplyBoxProps) {
@@ -102,6 +114,7 @@ export default function UserReplyBox({
       startPendingRef.current ||
       finishInFlightRef.current ||
       disabled ||
+      isMicrophoneMuted ||
       isBusy
     ) {
       return;
@@ -194,13 +207,13 @@ export default function UserReplyBox({
   return (
     <section className="reply-box voice-call-box" aria-labelledby="voice-reply-label">
       <div className="voice-call-heading">
-        <span className={`voice-call-presence ${isRecording || isPlayingReply ? "voice-call-presence-active" : ""}`} />
+        <span className={`voice-call-presence ${!isMicrophoneMuted && (isRecording || isPlayingReply) ? "voice-call-presence-active" : ""}`} />
         <p id="voice-reply-label" className="reply-label">
           语音陪听
         </p>
       </div>
 
-      <div className={`voice-call-stage ${isRecording ? "voice-call-stage-listening" : ""} ${isPlayingReply ? "voice-call-stage-speaking" : ""}`}>
+      <div className={`voice-call-stage ${isRecording && !isMicrophoneMuted ? "voice-call-stage-listening" : ""} ${isPlayingReply ? "voice-call-stage-speaking" : ""}`}>
         <span className="voice-call-ring voice-call-ring-one" aria-hidden="true" />
         <span className="voice-call-ring voice-call-ring-two" aria-hidden="true" />
 
@@ -211,7 +224,7 @@ export default function UserReplyBox({
             isCancelling ? " voice-record-button-cancelling" : ""
           }`}
           type="button"
-          disabled={disabled || isBusy}
+          disabled={disabled || isBusy || isMicrophoneMuted}
           aria-pressed={isPressing}
           aria-label="按住说话，松开发送，上移取消"
           onContextMenu={(event) => event.preventDefault()}
@@ -229,13 +242,67 @@ export default function UserReplyBox({
       </div>
 
       <p className="voice-record-status" aria-live="polite">
-        {getStatusText(
-          disabled,
-          status,
-          isPressing,
-          isCancelling,
-        )}
+        {isMicrophoneMuted
+          ? "麦克风已关闭，AI 听不到外放和你的声音"
+          : !isCallConnected && !disabled
+            ? "通话已挂断，按主按钮重新连接"
+            : getStatusText(
+                disabled,
+                status,
+                isPressing,
+                isCancelling,
+              )}
       </p>
+
+      <div className="voice-call-controls" aria-label="通话控制">
+        <div className="voice-call-control-item">
+          <button
+            type="button"
+            className={`voice-call-control-button${isSpeakerMuted ? " voice-call-control-button-muted" : ""}`}
+            disabled={disabled}
+            aria-label={isSpeakerMuted ? "打开扬声器" : "关闭扬声器"}
+            aria-pressed={!isSpeakerMuted}
+            onClick={onToggleSpeaker}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 9v6h4l5 4V5L8 9H4Zm12.5 3a4.5 4.5 0 0 0-2-4.03v8.06A4.5 4.5 0 0 0 16.5 12Zm0-8.48v2.06a7 7 0 0 1 0 12.84v2.06a9 9 0 0 0 0-16.96Z" />
+            </svg>
+          </button>
+          <span>{isSpeakerMuted ? "扬声器关" : "扬声器"}</span>
+        </div>
+
+        <div className="voice-call-control-item">
+          <button
+            type="button"
+            className={`voice-call-control-button${isMicrophoneMuted ? " voice-call-control-button-muted" : ""}`}
+            disabled={disabled}
+            aria-label={isMicrophoneMuted ? "打开麦克风" : "关闭麦克风"}
+            aria-pressed={!isMicrophoneMuted}
+            onClick={onToggleMicrophone}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V22h2v-3.08A7 7 0 0 0 19 12h-2Z" />
+              {isMicrophoneMuted && <path d="m4.7 3.3 16 16-1.4 1.4-16-16 1.4-1.4Z" />}
+            </svg>
+          </button>
+          <span>{isMicrophoneMuted ? "麦克风关" : "麦克风"}</span>
+        </div>
+
+        <div className="voice-call-control-item">
+          <button
+            type="button"
+            className="voice-call-control-button voice-call-control-button-hangup"
+            disabled={disabled || !isCallConnected}
+            aria-label="挂断语音通话"
+            onClick={() => void onHangUp()}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4.2 15.8c4.8-4.4 10.8-4.4 15.6 0l-2.7 3.1-3.2-2v-2.1a11.8 11.8 0 0 0-3.8 0v2.1l-3.2 2-2.7-3.1Z" />
+            </svg>
+          </button>
+          <span>挂断</span>
+        </div>
+      </div>
 
       <div className="ai-volume-control">
         <div className="ai-volume-heading">

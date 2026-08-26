@@ -30,12 +30,14 @@ export function useRealtimeMicrophone(
   const [status, setStatus] = useState<VoiceRecorderStatus>("idle");
   const [error, setError] = useState("");
   const [inputDeviceLabel, setInputDeviceLabel] = useState("");
+  const [isMuted, setIsMutedState] = useState(false);
   const streamRef = useRef<MediaStream | null>(null);
   const contextRef = useRef<AudioContext | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const onAudioChunkRef = useRef(onAudioChunk);
   const activeRef = useRef(false);
+  const isMutedRef = useRef(false);
 
   useEffect(() => {
     onAudioChunkRef.current = onAudioChunk;
@@ -53,6 +55,14 @@ export function useRealtimeMicrophone(
     contextRef.current = null;
     if (context && context.state !== "closed") await context.close();
     setStatus("idle");
+  }, []);
+
+  const setMuted = useCallback((muted: boolean) => {
+    isMutedRef.current = muted;
+    streamRef.current?.getAudioTracks().forEach((track) => {
+      track.enabled = !muted;
+    });
+    setIsMutedState(muted);
   }, []);
 
   const start = useCallback(async () => {
@@ -132,6 +142,7 @@ export function useRealtimeMicrophone(
       sourceRef.current = source;
       processorRef.current = processor;
       activeRef.current = true;
+      audioTrack.enabled = !isMutedRef.current;
       setInputDeviceLabel(audioTrack.label || "默认麦克风");
       setStatus("recording");
       return true;
@@ -149,5 +160,13 @@ export function useRealtimeMicrophone(
     };
   }, [stop]);
 
-  return { status, error, inputDeviceLabel, start, stop };
+  return {
+    status,
+    error,
+    inputDeviceLabel,
+    isMuted,
+    setMuted,
+    start,
+    stop,
+  };
 }
