@@ -21,6 +21,7 @@ interface UserReplyBoxProps {
   error: string;
   inputDeviceLabel?: string;
   isMicrophoneMuted: boolean;
+  musicContinuesWhenMicrophoneMuted: boolean;
   isSpeakerMuted: boolean;
   isCallConnected: boolean;
   isPlayingReply: boolean;
@@ -65,6 +66,7 @@ export default function UserReplyBox({
   error,
   inputDeviceLabel,
   isMicrophoneMuted,
+  musicContinuesWhenMicrophoneMuted,
   isSpeakerMuted,
   isCallConnected,
   isPlayingReply,
@@ -243,7 +245,9 @@ export default function UserReplyBox({
 
       <p className="voice-record-status" aria-live="polite">
         {isMicrophoneMuted
-          ? "麦克风已关闭，AI 听不到外放和你的声音"
+          ? musicContinuesWhenMicrophoneMuted
+            ? "麦克风已关闭，AI 仍在听音乐，但听不到你说话"
+            : "麦克风已关闭，AI 听不到其他设备外放和你的声音"
           : !isCallConnected && !disabled
             ? "通话已挂断，按主按钮重新连接"
             : getStatusText(
@@ -259,7 +263,6 @@ export default function UserReplyBox({
           <button
             type="button"
             className={`voice-call-control-button${isSpeakerMuted ? " voice-call-control-button-muted" : ""}`}
-            disabled={disabled}
             aria-label={isSpeakerMuted ? "打开扬声器" : "关闭扬声器"}
             aria-pressed={!isSpeakerMuted}
             onClick={onToggleSpeaker}
@@ -275,7 +278,6 @@ export default function UserReplyBox({
           <button
             type="button"
             className={`voice-call-control-button${isMicrophoneMuted ? " voice-call-control-button-muted" : ""}`}
-            disabled={disabled}
             aria-label={isMicrophoneMuted ? "打开麦克风" : "关闭麦克风"}
             aria-pressed={!isMicrophoneMuted}
             onClick={onToggleMicrophone}
@@ -292,7 +294,7 @@ export default function UserReplyBox({
           <button
             type="button"
             className="voice-call-control-button voice-call-control-button-hangup"
-            disabled={disabled || !isCallConnected}
+            disabled={!isCallConnected}
             aria-label="挂断语音通话"
             onClick={() => void onHangUp()}
           >

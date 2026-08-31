@@ -493,7 +493,7 @@ function buildQwenPrompt({
     getHumanReplyGuide(kind),
     `当前听歌来源：${
       listeningSource === "local_speaker"
-        ? "本机扬声器正在外放的音乐，由麦克风收音"
+        ? "电脑内部正在播放的系统或标签页音频"
         : listeningSource === "nearby_speaker"
           ? "手机、音箱或收音机等其他设备外放的音乐，由麦克风收音"
           : "页面内上传的音乐文件"
@@ -892,6 +892,16 @@ export default function Home() {
     setQwenRealtimeStatus("connecting");
     qwenReadyRef.current = false;
 
+    const shouldPlayCurrentReplyAudio = () => {
+      const promptKind = activeQwenPromptKindRef.current;
+      if (!promptKind) return false;
+      if (promptKind === "user_reply") return true;
+
+      return listeningInputModeRef.current === "file"
+        ? playbackRef.current.isPlaying
+        : liveListeningStatusRef.current === "listening";
+    };
+
     const client = new QwenRealtimeClient({
       onStatusChange: (status) => {
         setQwenRealtimeStatus(status);
@@ -978,31 +988,19 @@ export default function Home() {
       },
 
       onAudioStart: () => {
-        if (
-          activeQwenPromptKindRef.current &&
-          (activeQwenPromptKindRef.current === "user_reply" ||
-            playbackRef.current.isPlaying)
-        ) {
+        if (shouldPlayCurrentReplyAudio()) {
           beginReplyAudio();
         }
       },
 
       onAudioDelta: (audioBase64) => {
-        if (
-          activeQwenPromptKindRef.current &&
-          (activeQwenPromptKindRef.current === "user_reply" ||
-            playbackRef.current.isPlaying)
-        ) {
+        if (shouldPlayCurrentReplyAudio()) {
           appendReplyAudio(audioBase64);
         }
       },
 
       onAudioDone: () => {
-        if (
-          activeQwenPromptKindRef.current &&
-          (activeQwenPromptKindRef.current === "user_reply" ||
-            playbackRef.current.isPlaying)
-        ) {
+        if (shouldPlayCurrentReplyAudio()) {
           finishReplyAudio();
         }
       },
@@ -1830,7 +1828,7 @@ export default function Home() {
     }
 
     if (
-      listeningInputMode !== "file" &&
+      nextMode === listeningInputMode &&
       liveListeningStatus === "listening"
     ) {
       return;
@@ -1839,7 +1837,12 @@ export default function Home() {
     void prepareReplyAudio();
     connectQwenRealtime();
     try {
-      await startLiveListening();
+      await startLiveListening(
+        nextMode === "local_speaker"
+          ? "system_audio"
+          : "microphone",
+        nextMode === "nearby_speaker" && isMicrophoneMuted,
+      );
     } catch {
       // 采集 hook 已提供可直接显示的错误信息。
     }
@@ -1894,11 +1897,15 @@ export default function Home() {
   const handleToggleMicrophone = () => {
     const nextMuted = !isMicrophoneMuted;
     setMicrophoneMuted(nextMuted);
-    setListeningMicrophoneMuted(nextMuted);
+    if (listeningInputMode === "nearby_speaker") {
+      setListeningMicrophoneMuted(nextMuted);
+    }
     if (nextMuted) {
       cancelScheduledProactiveComment();
       cancelActiveProactiveComment();
-      qwenClientRef.current?.clearInputAudio();
+      if (listeningInputMode === "nearby_speaker") {
+        qwenClientRef.current?.clearInputAudio();
+      }
       qwenVoiceClientRef.current?.clearInputAudio();
     }
   };
@@ -2003,7 +2010,7 @@ export default function Home() {
               {(
                 [
                   ["file", "上传音乐", "页面内播放"],
-                  ["local_speaker", "本机外放", "这台电脑播放"],
+                  ["local_speaker", "系统声音", "直接获取本机音频"],
                   ["nearby_speaker", "其他设备", "手机·音箱·收音机"],
                 ] as const
               ).map(([mode, label, detail]) => (
@@ -2027,13 +2034,15 @@ export default function Home() {
                 : liveListeningStatus === "listening"
                   ? `正在通过 ${liveListeningLabel} 听${
                       listeningInputMode === "local_speaker"
-                        ? "这台电脑外放的音乐"
+                        ? "这台电脑的系统音乐"
                         : "其他设备外放的音乐"
                     }。`
                   : liveListeningStatus === "requesting_permission"
-                    ? "正在连接麦克风…"
+                    ? listeningInputMode === "local_speaker"
+                      ? "正在请求系统音频共享…"
+                      : "正在连接麦克风…"
                     : listeningInputMode === "local_speaker"
-                      ? "用这台电脑的扬声器播放音乐，AI 会通过麦克风和你一起听。"
+                      ? "选择正在播放音乐的标签页或屏幕，并勾选“共享音频”。不会使用摄像头。"
                       : "用手机、音箱或收音机外放音乐，AI 会通过麦克风和你一起听。"}
             </p>
             {listeningInputMode !== "file" && liveListeningError && (
@@ -2168,6 +2177,9 @@ export default function Home() {
           error={voiceInputError || voiceRecorderError}
           inputDeviceLabel={inputDeviceLabel}
           isMicrophoneMuted={isMicrophoneMuted}
+          musicContinuesWhenMicrophoneMuted={
+            listeningInputMode !== "nearby_speaker"
+          }
           isSpeakerMuted={isSpeakerMuted}
           isCallConnected={isVoiceCallConnected}
           isPlayingReply={isPlayingReply}
@@ -2183,7 +2195,7 @@ export default function Home() {
         />
 
         <footer style={styles.footer}>
-          AI 可以听页面音乐或外放音乐；通话麦克风可随时关闭。
+          AI 可以听页面音乐、系统声音或其他设备外放；通话麦克风可随时关闭。
         </footer>
       </section>
     </main>
