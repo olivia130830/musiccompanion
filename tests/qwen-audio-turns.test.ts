@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   QWEN_AUDIO_CHUNK_BASE64_LENGTH,
+  QWEN_MAX_OUTPUT_TOKENS,
   QwenRealtimeClient,
   type QwenRealtimeClientOptions,
 } from "@/lib/qwen/realtimeClient";
@@ -91,6 +92,9 @@ describe("Qwen audio turns", () => {
       .events()
       .findLast((event) => event.type === "session.update");
     expect(sessionUpdate.session.input_audio_transcription).toBeNull();
+    expect(sessionUpdate.session.max_tokens).toBe(
+      QWEN_MAX_OUTPUT_TOKENS,
+    );
 
     expect(socket.events().at(-1)).toEqual({
       type: "response.create",
@@ -188,7 +192,7 @@ describe("Qwen audio turns", () => {
     });
   });
 
-  it("streams a continuous voice call with server VAD", () => {
+  it("streams a continuous voice call with semantic VAD", () => {
     let speechStarted = 0;
     let speechStopped = 0;
     let transcriptKind: string | null = null;
@@ -209,10 +213,11 @@ describe("Qwen audio turns", () => {
 
     const sessionUpdate = socket.events().at(-1);
     expect(sessionUpdate.session.turn_detection).toEqual({
-      type: "server_vad",
-      threshold: 0.5,
-      silence_duration_ms: 400,
+      type: "semantic_vad",
     });
+    expect(sessionUpdate.session.max_tokens).toBe(
+      QWEN_MAX_OUTPUT_TOKENS,
+    );
     expect(sessionUpdate.session.input_audio_transcription).toEqual({
       model: "qwen3-asr-flash-realtime",
     });

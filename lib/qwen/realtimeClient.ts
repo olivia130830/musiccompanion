@@ -37,6 +37,11 @@ const LOCAL_PROXY_URL = "ws://localhost:8787/qwen-realtime";
 // 4 字符边界拆分，每个 append 事件还需要为 JSON 字段预留空间。
 export const QWEN_AUDIO_CHUNK_BASE64_LENGTH = 64 * 1024;
 
+// A normal MusicCompanion reply is far below this ceiling. Keeping a generous
+// server-side limit prevents an accidental runaway audio response from using
+// thousands of output tokens without shortening the intended reply.
+export const QWEN_MAX_OUTPUT_TOKENS = 512;
+
 type ProxyPageLocation = Pick<
   Location,
   "host" | "hostname" | "port" | "protocol"
@@ -275,9 +280,7 @@ export class QwenRealtimeClient {
     this.liveVoiceMode = true;
     this.isConfigured = false;
     this.sendSessionUpdate(instructions, true, {
-      type: "server_vad",
-      threshold: 0.5,
-      silence_duration_ms: 400,
+      type: "semantic_vad",
     });
     return true;
   }
@@ -456,9 +459,7 @@ export class QwenRealtimeClient {
     instructions = DEFAULT_INSTRUCTIONS,
     enableInputTranscription = false,
     turnDetection: null | {
-      type: "server_vad";
-      threshold: number;
-      silence_duration_ms: number;
+      type: "semantic_vad";
     } = null,
   ) {
     this.sendEvent({
@@ -468,6 +469,7 @@ export class QwenRealtimeClient {
         voice: "Tina",
         input_audio_format: "pcm",
         output_audio_format: "pcm",
+        max_tokens: QWEN_MAX_OUTPUT_TOKENS,
         // 歌曲由 Omni 直接理解，不做文字转写；只有麦克风语音开启
         // ASR，用于在历史区显示用户实际说的话。
         input_audio_transcription: enableInputTranscription
