@@ -98,6 +98,34 @@ describe("Qwen audio turns", () => {
     });
   });
 
+  it("requests text-only output for typed chat", () => {
+    const { client, socket } = createReadyClient();
+
+    expect(
+      client.sendTextMessage("这段旋律怎么样？", "只用文字回答", false),
+    ).toBe(true);
+
+    const events = socket.events();
+    expect(
+      events.findLast((event) => event.type === "session.update")
+        .session.instructions,
+    ).toBe("只用文字回答");
+    expect(
+      events.findLast(
+        (event) => event.type === "conversation.item.create",
+      ).item.content,
+    ).toEqual([
+      {
+        type: "input_text",
+        text: "这段旋律怎么样？",
+      },
+    ]);
+    expect(events.at(-1)).toEqual({
+      type: "response.create",
+      response: { modalities: ["text"] },
+    });
+  });
+
   it("commits already-streamed live music without resending it", () => {
     const { client, socket } = createReadyClient();
 

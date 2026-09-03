@@ -302,7 +302,10 @@ export class QwenRealtimeClient {
     return true;
   }
 
-  public commitMusicStream(instructions: string) {
+  public commitMusicStream(
+    instructions: string,
+    responseWithAudio = true,
+  ) {
     if (!this.isReady() || !this.hasPendingStreamAudio) {
       return false;
     }
@@ -311,7 +314,7 @@ export class QwenRealtimeClient {
     this.pendingInputKinds.push("music");
     this.sendEvent({ type: "input_audio_buffer.commit" });
     this.hasPendingStreamAudio = false;
-    this.createSpokenResponse();
+    this.createResponse(responseWithAudio);
     return true;
   }
 
@@ -323,13 +326,18 @@ export class QwenRealtimeClient {
     );
   }
 
-  public sendTextMessage(text: string) {
+  public sendTextMessage(
+    text: string,
+    instructions = DEFAULT_INSTRUCTIONS,
+    responseWithAudio = true,
+  ) {
     const cleanText = text.trim();
 
     if (!cleanText || !this.isReady()) {
       return false;
     }
 
+    this.sendSessionUpdate(instructions, false);
     this.sendEvent({
       type: "conversation.item.create",
       item: {
@@ -349,7 +357,9 @@ export class QwenRealtimeClient {
     this.sendEvent({
       type: "response.create",
       response: {
-        modalities: ["text", "audio"],
+        modalities: responseWithAudio
+          ? ["text", "audio"]
+          : ["text"],
       },
     });
 
@@ -391,7 +401,7 @@ export class QwenRealtimeClient {
 
     this.sendSessionUpdate(instructions, inputKind === "voice");
     this.commitAudioInput(audioBase64, inputKind);
-    this.createSpokenResponse();
+    this.createResponse();
     return true;
   }
 
@@ -422,11 +432,15 @@ export class QwenRealtimeClient {
     }
   }
 
-  private createSpokenResponse() {
+  private createResponse(responseWithAudio = true) {
     this.finalText = "";
     this.sendEvent({
       type: "response.create",
-      response: { modalities: ["text", "audio"] },
+      response: {
+        modalities: responseWithAudio
+          ? ["text", "audio"]
+          : ["text"],
+      },
     });
     this.options.onStatusChange?.("streaming");
   }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  calculateAudioRms,
   captureSystemAudio,
   getElectronDesktopAudioConstraints,
   getMusicMicrophoneConstraints,
@@ -9,6 +10,13 @@ import {
 } from "@/hooks/useRealtimeListeningSource";
 
 describe("realtime listening source constraints", () => {
+  it("distinguishes silence from an audible signal", () => {
+    expect(calculateAudioRms(new Float32Array(16))).toBe(0);
+    expect(
+      calculateAudioRms(new Float32Array([0.01, -0.01, 0.01, -0.01])),
+    ).toBeCloseTo(0.01);
+  });
+
   it("keeps environmental music unprocessed on microphone input", () => {
     expect(getMusicMicrophoneConstraints()).toMatchObject({
       channelCount: 1,

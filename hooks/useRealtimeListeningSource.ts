@@ -17,6 +17,16 @@ export type LiveListeningStatus =
   | "requesting_permission"
   | "listening";
 
+export function calculateAudioRms(samples: Float32Array) {
+  if (samples.length === 0) return 0;
+
+  let sumOfSquares = 0;
+  for (const sample of samples) {
+    sumOfSquares += sample * sample;
+  }
+  return Math.sqrt(sumOfSquares / samples.length);
+}
+
 export function getMusicMicrophoneConstraints(): MediaTrackConstraints {
   return {
     channelCount: 1,
@@ -152,7 +162,7 @@ function getCaptureError(
 }
 
 export function useRealtimeListeningSource(
-  onAudioChunk: (audioBase64: string) => void,
+  onAudioChunk: (audioBase64: string, rms: number) => void,
 ) {
   const [status, setStatus] = useState<LiveListeningStatus>("idle");
   const [error, setError] = useState("");
@@ -284,7 +294,10 @@ export function useRealtimeListeningSource(
           if (!activeRef.current) return;
           const samples = event.inputBuffer.getChannelData(0);
           const resampled = resampleMonoFloat32(samples, context.sampleRate);
-          onAudioChunkRef.current(float32ToPcm16Base64(resampled));
+          onAudioChunkRef.current(
+            float32ToPcm16Base64(resampled),
+            calculateAudioRms(samples),
+          );
         };
         sourceNode.connect(processor);
         processor.connect(context.destination);

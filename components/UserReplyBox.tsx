@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type FormEvent,
   type KeyboardEvent,
   type PointerEvent,
 } from "react";
@@ -14,6 +15,8 @@ export type VoiceInputStatus =
   | "recording"
   | "sending"
   | "speaking";
+
+export type CommunicationMode = "voice" | "text";
 
 interface UserReplyBoxProps {
   disabled: boolean;
@@ -26,6 +29,8 @@ interface UserReplyBoxProps {
   isCallConnected: boolean;
   isPlayingReply: boolean;
   aiVolume: number;
+  communicationMode: CommunicationMode;
+  isTextSending: boolean;
   onStartRecording: () => Promise<boolean>;
   onStopRecording: () => void | Promise<void>;
   onCancelRecording: () => void | Promise<void>;
@@ -34,6 +39,8 @@ interface UserReplyBoxProps {
   onHangUp: () => void | Promise<void>;
   onStopReply: () => void;
   onAiVolumeChange: (volume: number) => void;
+  onCommunicationModeChange: (mode: CommunicationMode) => void;
+  onSendText: (text: string) => Promise<boolean>;
 }
 
 const CANCEL_GESTURE_DISTANCE = 40;
@@ -71,6 +78,8 @@ export default function UserReplyBox({
   isCallConnected,
   isPlayingReply,
   aiVolume,
+  communicationMode,
+  isTextSending,
   onStartRecording,
   onStopRecording,
   onCancelRecording,
@@ -79,7 +88,10 @@ export default function UserReplyBox({
   onHangUp,
   onStopReply,
   onAiVolumeChange,
+  onCommunicationModeChange,
+  onSendText,
 }: UserReplyBoxProps) {
+  const [textDraft, setTextDraft] = useState("");
   const [isPressing, setIsPressing] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const gestureActiveRef = useRef(false);
@@ -91,6 +103,15 @@ export default function UserReplyBox({
   const finishInFlightRef = useRef(false);
   const isRecording = status === "recording";
   const isBusy = status === "sending";
+
+  const handleTextSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const text = textDraft.trim();
+    if (!text || disabled || isTextSending) return;
+    void onSendText(text).then((sent) => {
+      if (sent) setTextDraft("");
+    });
+  };
 
   const finishRecording = () => {
     if (
@@ -211,11 +232,56 @@ export default function UserReplyBox({
       <div className="voice-call-heading">
         <span className={`voice-call-presence ${!isMicrophoneMuted && (isRecording || isPlayingReply) ? "voice-call-presence-active" : ""}`} />
         <p id="voice-reply-label" className="reply-label">
-          语音陪听
+          {communicationMode === "voice" ? "语音陪听" : "文字陪听"}
         </p>
       </div>
 
-      <div className={`voice-call-stage ${isRecording && !isMicrophoneMuted ? "voice-call-stage-listening" : ""} ${isPlayingReply ? "voice-call-stage-speaking" : ""}`}>
+      <div className="communication-mode-options" role="group" aria-label="选择与 AI 的沟通方式">
+        <button
+          type="button"
+          className={communicationMode === "voice" ? "communication-mode-active" : ""}
+          aria-pressed={communicationMode === "voice"}
+          onClick={() => onCommunicationModeChange("voice")}
+        >
+          语音沟通
+        </button>
+        <button
+          type="button"
+          className={communicationMode === "text" ? "communication-mode-active" : ""}
+          aria-pressed={communicationMode === "text"}
+          onClick={() => onCommunicationModeChange("text")}
+        >
+          打字聊天
+        </button>
+      </div>
+
+      {communicationMode === "text" && (
+        <form className="text-reply-form" onSubmit={handleTextSubmit}>
+          <textarea
+            value={textDraft}
+            rows={2}
+            maxLength={500}
+            disabled={disabled || isTextSending}
+            aria-label="输入要对 AI 说的话"
+            placeholder={disabled ? "先选择一首音乐" : "输入想对 AI 说的话…"}
+            onChange={(event) => setTextDraft(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
+              }
+            }}
+          />
+          <button
+            type="submit"
+            disabled={disabled || isTextSending || !textDraft.trim()}
+          >
+            {isTextSending ? "发送中…" : "发送"}
+          </button>
+        </form>
+      )}
+
+      <div hidden={communicationMode === "text"} className={`voice-call-stage ${isRecording && !isMicrophoneMuted ? "voice-call-stage-listening" : ""} ${isPlayingReply ? "voice-call-stage-speaking" : ""}`}>
         <span className="voice-call-ring voice-call-ring-one" aria-hidden="true" />
         <span className="voice-call-ring voice-call-ring-two" aria-hidden="true" />
 
@@ -244,7 +310,13 @@ export default function UserReplyBox({
       </div>
 
       <p className="voice-record-status" aria-live="polite">
-        {isMicrophoneMuted
+        {communicationMode === "text"
+          ? disabled
+            ? "先选择音乐，之后可以直接打字"
+            : isTextSending
+              ? "AI 正在用文字回复…"
+              : "文字模式不会播放 AI 语音"
+          : isMicrophoneMuted
           ? musicContinuesWhenMicrophoneMuted
             ? "麦克风已关闭，AI 仍在听音乐，但听不到你说话"
             : "麦克风已关闭，AI 听不到其他设备外放和你的声音"
@@ -258,7 +330,7 @@ export default function UserReplyBox({
               )}
       </p>
 
-      <div className="voice-call-controls" aria-label="通话控制">
+      <div hidden={communicationMode === "text"} className="voice-call-controls" aria-label="通话控制">
         <div className="voice-call-control-item">
           <button
             type="button"
@@ -306,7 +378,7 @@ export default function UserReplyBox({
         </div>
       </div>
 
-      <div className="ai-volume-control">
+      <div hidden={communicationMode === "text"} className="ai-volume-control">
         <div className="ai-volume-heading">
           <span className="ai-volume-label">
             <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -339,13 +411,13 @@ export default function UserReplyBox({
         />
       </div>
 
-      {inputDeviceLabel && (
+      {communicationMode === "voice" && inputDeviceLabel && (
         <p className="voice-record-status">
           当前麦克风：{inputDeviceLabel}
         </p>
       )}
 
-      {isPlayingReply && (
+      {communicationMode === "voice" && isPlayingReply && (
         <button
           type="button"
           className="voice-secondary-button"
