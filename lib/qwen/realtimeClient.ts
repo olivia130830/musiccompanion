@@ -18,6 +18,8 @@ export type QwenRealtimeClientOptions = {
   onAudioDelta?: (audioBase64: string) => void;
   onAudioDone?: () => void;
   onResponseDone?: () => void;
+  onSpeechStarted?: () => void;
+  onSpeechStopped?: () => void;
   onInputTranscriptDone?: (
     text: string,
     inputKind: QwenAudioInputKind | null,
@@ -34,6 +36,11 @@ const LOCAL_PROXY_URL = "ws://localhost:8787/qwen-realtime";
 // 千问 WebSocket 的单帧上限是 262,144 字节。Base64 音频必须按
 // 4 字符边界拆分，每个 append 事件还需要为 JSON 字段预留空间。
 export const QWEN_AUDIO_CHUNK_BASE64_LENGTH = 64 * 1024;
+
+// A normal MusicCompanion reply is far below this ceiling. Keeping a generous
+// server-side limit prevents an accidental runaway audio response from using
+// thousands of output tokens without shortening the intended reply.
+export const QWEN_MAX_OUTPUT_TOKENS = 512;
 
 type ProxyPageLocation = Pick<
   Location,
@@ -185,6 +192,8 @@ export class QwenRealtimeClient {
 
   private hasPendingStreamAudio = false;
 
+  private liveVoiceMode = false;
+
   private pendingInputKinds: QwenAudioInputKind[] = [];
 
   private readonly inputKindByItemId =
@@ -265,6 +274,26 @@ export class QwenRealtimeClient {
     return true;
   }
 
+  public startVoiceCall(instructions: string) {
+    if (!this.isReady()) return false;
+
+    this.liveVoiceMode = true;
+    this.isConfigured = false;
+    this.sendSessionUpdate(instructions, true, {
+      type: "semantic_vad",
+    });
+    return true;
+  }
+
+  public appendVoiceAudio(audioBase64: string) {
+    if (!audioBase64 || !this.liveVoiceMode || !this.isReady()) {
+      return false;
+    }
+
+    this.appendAudio(audioBase64);
+    return true;
+  }
+
   public clearInputAudio() {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
       this.hasPendingStreamAudio = false;
@@ -276,7 +305,10 @@ export class QwenRealtimeClient {
     return true;
   }
 
-  public commitMusicStream(instructions: string) {
+  public commitMusicStream(
+    instructions: string,
+    responseWithAudio = true,
+  ) {
     if (!this.isReady() || !this.hasPendingStreamAudio) {
       return false;
     }
@@ -285,7 +317,7 @@ export class QwenRealtimeClient {
     this.pendingInputKinds.push("music");
     this.sendEvent({ type: "input_audio_buffer.commit" });
     this.hasPendingStreamAudio = false;
-    this.createSpokenResponse();
+    this.createResponse(responseWithAudio);
     return true;
   }
 
@@ -297,13 +329,18 @@ export class QwenRealtimeClient {
     );
   }
 
-  public sendTextMessage(text: string) {
+  public sendTextMessage(
+    text: string,
+    instructions = DEFAULT_INSTRUCTIONS,
+    responseWithAudio = true,
+  ) {
     const cleanText = text.trim();
 
     if (!cleanText || !this.isReady()) {
       return false;
     }
 
+    this.sendSessionUpdate(instructions, false);
     this.sendEvent({
       type: "conversation.item.create",
       item: {
@@ -323,7 +360,9 @@ export class QwenRealtimeClient {
     this.sendEvent({
       type: "response.create",
       response: {
-        modalities: ["text", "audio"],
+        modalities: responseWithAudio
+          ? ["text", "audio"]
+          : ["text"],
       },
     });
 
@@ -365,7 +404,7 @@ export class QwenRealtimeClient {
 
     this.sendSessionUpdate(instructions, inputKind === "voice");
     this.commitAudioInput(audioBase64, inputKind);
-    this.createSpokenResponse();
+    this.createResponse();
     return true;
   }
 
@@ -396,11 +435,15 @@ export class QwenRealtimeClient {
     }
   }
 
-  private createSpokenResponse() {
+  private createResponse(responseWithAudio = true) {
     this.finalText = "";
     this.sendEvent({
       type: "response.create",
-      response: { modalities: ["text", "audio"] },
+      response: {
+        modalities: responseWithAudio
+          ? ["text", "audio"]
+          : ["text"],
+      },
     });
     this.options.onStatusChange?.("streaming");
   }
@@ -409,11 +452,15 @@ export class QwenRealtimeClient {
     this.pendingInputKinds = [];
     this.inputKindByItemId.clear();
     this.hasPendingStreamAudio = false;
+    this.liveVoiceMode = false;
   }
 
   private sendSessionUpdate(
     instructions = DEFAULT_INSTRUCTIONS,
     enableInputTranscription = false,
+    turnDetection: null | {
+      type: "semantic_vad";
+    } = null,
   ) {
     this.sendEvent({
       type: "session.update",
@@ -422,6 +469,7 @@ export class QwenRealtimeClient {
         voice: "Tina",
         input_audio_format: "pcm",
         output_audio_format: "pcm",
+        max_tokens: QWEN_MAX_OUTPUT_TOKENS,
         // 歌曲由 Omni 直接理解，不做文字转写；只有麦克风语音开启
         // ASR，用于在历史区显示用户实际说的话。
         input_audio_transcription: enableInputTranscription
@@ -429,7 +477,7 @@ export class QwenRealtimeClient {
               model: "qwen3-asr-flash-realtime",
             }
           : null,
-        turn_detection: null,
+        turn_detection: turnDetection,
         instructions,
       },
     });
@@ -485,13 +533,25 @@ export class QwenRealtimeClient {
       return;
     }
 
+    if (eventType === "input_audio_buffer.speech_started") {
+      this.options.onSpeechStarted?.();
+      return;
+    }
+
+    if (eventType === "input_audio_buffer.speech_stopped") {
+      this.options.onSpeechStopped?.();
+      return;
+    }
+
     if (eventType === "input_audio_buffer.committed") {
       const record = getRecord(event);
       const itemId =
         record && typeof record.item_id === "string"
           ? record.item_id
           : "";
-      const inputKind = this.pendingInputKinds.shift() ?? null;
+      const inputKind =
+        this.pendingInputKinds.shift() ??
+        (this.liveVoiceMode ? "voice" : null);
 
       if (itemId && inputKind) {
         this.inputKindByItemId.set(itemId, inputKind);
