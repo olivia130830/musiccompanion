@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "NODE_OPTIONS= concurrently -k -n qwen,next \"NODE_OPTIONS= node --env-file=.env.local server/qwen/realtime-proxy.mjs\" \"NODE_OPTIONS= HTTP_PROXY=http://127.0.0.1:65532 HTTPS_PROXY=http://127.0.0.1:65532 NO_PROXY=localhost,127.0.0.1 node --use-env-proxy ./node_modules/next/dist/bin/next dev\"",
-    "dev:next": "NODE_OPTIONS= HTTP_PROXY=http://127.0.0.1:65532 HTTPS_PROXY=http://127.0.0.1:65532 NO_PROXY=localhost,127.0.0.1 node --use-env-proxy ./node_modules/next/dist/bin/next dev",
+    "dev": "NODE_OPTIONS= concurrently -k -n qwen,next \"NODE_OPTIONS= node --env-file=.env.local server/qwen/realtime-proxy.mjs\" \"NODE_OPTIONS= next dev --hostname 127.0.0.1\"",
+    "dev:next": "NODE_OPTIONS= next dev --hostname 127.0.0.1",
     "dev:qwen": "NODE_OPTIONS= node --env-file=.env.local server/qwen/realtime-proxy.mjs",
     "dev:direct": "NODE_OPTIONS= next dev",
     "build": "next build",

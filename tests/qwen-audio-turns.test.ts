@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   QWEN_AUDIO_CHUNK_BASE64_LENGTH,
+  QWEN_MAX_OUTPUT_TOKENS,
   QwenRealtimeClient,
+  type QwenRealtimeClientOptions,
 } from "@/lib/qwen/realtimeClient";
 
 class FakeWebSocket {
@@ -48,7 +50,7 @@ class FakeWebSocket {
   }
 }
 
-function createReadyClient() {
+function createReadyClient(options: QwenRealtimeClientOptions = {}) {
   const holder: { current: FakeWebSocket | null } = {
     current: null,
   };
@@ -61,6 +63,7 @@ function createReadyClient() {
   } as unknown as typeof WebSocket;
 
   const client = new QwenRealtimeClient({
+    ...options,
     url: "ws://test",
   });
   client.connect();
@@ -89,10 +92,41 @@ describe("Qwen audio turns", () => {
       .events()
       .findLast((event) => event.type === "session.update");
     expect(sessionUpdate.session.input_audio_transcription).toBeNull();
+    expect(sessionUpdate.session.max_tokens).toBe(
+      QWEN_MAX_OUTPUT_TOKENS,
+    );
 
     expect(socket.events().at(-1)).toEqual({
       type: "response.create",
       response: { modalities: ["text", "audio"] },
+    });
+  });
+
+  it("requests text-only output for typed chat", () => {
+    const { client, socket } = createReadyClient();
+
+    expect(
+      client.sendTextMessage("这段旋律怎么样？", "只用文字回答", false),
+    ).toBe(true);
+
+    const events = socket.events();
+    expect(
+      events.findLast((event) => event.type === "session.update")
+        .session.instructions,
+    ).toBe("只用文字回答");
+    expect(
+      events.findLast(
+        (event) => event.type === "conversation.item.create",
+      ).item.content,
+    ).toEqual([
+      {
+        type: "input_text",
+        text: "这段旋律怎么样？",
+      },
+    ]);
+    expect(events.at(-1)).toEqual({
+      type: "response.create",
+      response: { modalities: ["text"] },
     });
   });
 
@@ -156,6 +190,63 @@ describe("Qwen audio turns", () => {
     expect(sessionUpdate.session.input_audio_transcription).toEqual({
       model: "qwen3-asr-flash-realtime",
     });
+  });
+
+  it("streams a continuous voice call with semantic VAD", () => {
+    let speechStarted = 0;
+    let speechStopped = 0;
+    let transcriptKind: string | null = null;
+    const { client, socket } = createReadyClient({
+      onSpeechStarted: () => {
+        speechStarted += 1;
+      },
+      onSpeechStopped: () => {
+        speechStopped += 1;
+      },
+      onInputTranscriptDone: (_text, kind) => {
+        transcriptKind = kind;
+      },
+    });
+
+    expect(client.startVoiceCall("answer quickly")).toBe(true);
+    expect(client.isReady()).toBe(false);
+
+    const sessionUpdate = socket.events().at(-1);
+    expect(sessionUpdate.session.turn_detection).toEqual({
+      type: "semantic_vad",
+    });
+    expect(sessionUpdate.session.max_tokens).toBe(
+      QWEN_MAX_OUTPUT_TOKENS,
+    );
+    expect(sessionUpdate.session.input_audio_transcription).toEqual({
+      model: "qwen3-asr-flash-realtime",
+    });
+
+    socket.message({ type: "session.updated" });
+    expect(client.appendVoiceAudio("live-microphone-frame")).toBe(true);
+    expect(socket.events().at(-1)).toEqual({
+      type: "input_audio_buffer.append",
+      audio: "live-microphone-frame",
+    });
+    expect(
+      socket.events().filter((event) => event.type === "response.create"),
+    ).toHaveLength(0);
+
+    socket.message({ type: "input_audio_buffer.speech_started" });
+    socket.message({ type: "input_audio_buffer.speech_stopped" });
+    socket.message({
+      type: "input_audio_buffer.committed",
+      item_id: "voice-item",
+    });
+    socket.message({
+      type: "conversation.item.input_audio_transcription.completed",
+      item_id: "voice-item",
+      transcript: "你好",
+    });
+
+    expect(speechStarted).toBe(1);
+    expect(speechStopped).toBe(1);
+    expect(transcriptKind).toBe("voice");
   });
 
   it("splits audio into frames safely below Qwen's limit", () => {
