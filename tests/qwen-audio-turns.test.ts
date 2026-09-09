@@ -192,7 +192,7 @@ describe("Qwen audio turns", () => {
     });
   });
 
-  it("streams a continuous voice call with semantic VAD", () => {
+  it("streams a continuous voice call with server VAD", () => {
     let speechStarted = 0;
     let speechStopped = 0;
     let transcriptKind: string | null = null;
@@ -213,7 +213,9 @@ describe("Qwen audio turns", () => {
 
     const sessionUpdate = socket.events().at(-1);
     expect(sessionUpdate.session.turn_detection).toEqual({
-      type: "semantic_vad",
+      type: "server_vad",
+      threshold: 0.5,
+      silence_duration_ms: 400,
     });
     expect(sessionUpdate.session.max_tokens).toBe(
       QWEN_MAX_OUTPUT_TOKENS,

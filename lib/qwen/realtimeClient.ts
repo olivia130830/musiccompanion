@@ -280,7 +280,9 @@ export class QwenRealtimeClient {
     this.liveVoiceMode = true;
     this.isConfigured = false;
     this.sendSessionUpdate(instructions, true, {
-      type: "semantic_vad",
+      type: "server_vad",
+      threshold: 0.5,
+      silence_duration_ms: 400,
     });
     return true;
   }
@@ -459,7 +461,9 @@ export class QwenRealtimeClient {
     instructions = DEFAULT_INSTRUCTIONS,
     enableInputTranscription = false,
     turnDetection: null | {
-      type: "semantic_vad";
+      type: "server_vad";
+      threshold: number;
+      silence_duration_ms: number;
     } = null,
   ) {
     this.sendEvent({
