@@ -192,6 +192,10 @@ export class QwenRealtimeClient {
 
   private hasPendingStreamAudio = false;
 
+  private hasPendingVoiceAudio = false;
+
+  private responseActive = false;
+
   private liveVoiceMode = false;
 
   private pendingInputKinds: QwenAudioInputKind[] = [];
@@ -255,7 +259,11 @@ export class QwenRealtimeClient {
   }
 
   public cancelResponse() {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+    if (
+      !this.socket ||
+      this.socket.readyState !== WebSocket.OPEN ||
+      !this.responseActive
+    ) {
       return false;
     }
 
@@ -279,11 +287,9 @@ export class QwenRealtimeClient {
 
     this.liveVoiceMode = true;
     this.isConfigured = false;
-    this.sendSessionUpdate(instructions, true, {
-      type: "server_vad",
-      threshold: 0.5,
-      silence_duration_ms: 400,
-    });
+    // Voice turns are controlled by the press-to-talk button. Manual commit
+    // avoids server VAD mistaking the song or the AI's own playback for speech.
+    this.sendSessionUpdate(instructions, true, null);
     return true;
   }
 
@@ -293,6 +299,23 @@ export class QwenRealtimeClient {
     }
 
     this.appendAudio(audioBase64);
+    this.hasPendingVoiceAudio = true;
+    return true;
+  }
+
+  public commitVoiceTurn() {
+    if (
+      !this.isReady() ||
+      !this.hasPendingVoiceAudio ||
+      this.responseActive
+    ) {
+      return false;
+    }
+
+    this.pendingInputKinds.push("voice");
+    this.sendEvent({ type: "input_audio_buffer.commit" });
+    this.hasPendingVoiceAudio = false;
+    this.createResponse(true);
     return true;
   }
 
@@ -304,6 +327,7 @@ export class QwenRealtimeClient {
 
     this.sendEvent({ type: "input_audio_buffer.clear" });
     this.hasPendingStreamAudio = false;
+    this.hasPendingVoiceAudio = false;
     return true;
   }
 
@@ -311,7 +335,11 @@ export class QwenRealtimeClient {
     instructions: string,
     responseWithAudio = true,
   ) {
-    if (!this.isReady() || !this.hasPendingStreamAudio) {
+    if (
+      !this.isReady() ||
+      !this.hasPendingStreamAudio ||
+      this.responseActive
+    ) {
       return false;
     }
 
@@ -338,7 +366,7 @@ export class QwenRealtimeClient {
   ) {
     const cleanText = text.trim();
 
-    if (!cleanText || !this.isReady()) {
+    if (!cleanText || !this.isReady() || this.responseActive) {
       return false;
     }
 
@@ -358,6 +386,7 @@ export class QwenRealtimeClient {
     });
 
     this.finalText = "";
+    this.responseActive = true;
 
     this.sendEvent({
       type: "response.create",
@@ -402,7 +431,9 @@ export class QwenRealtimeClient {
     instructions: string,
     inputKind: QwenAudioInputKind,
   ) {
-    if (!audioBase64 || !this.isReady()) return false;
+    if (!audioBase64 || !this.isReady() || this.responseActive) {
+      return false;
+    }
 
     this.sendSessionUpdate(instructions, inputKind === "voice");
     this.commitAudioInput(audioBase64, inputKind);
@@ -438,6 +469,7 @@ export class QwenRealtimeClient {
   }
 
   private createResponse(responseWithAudio = true) {
+    this.responseActive = true;
     this.finalText = "";
     this.sendEvent({
       type: "response.create",
@@ -454,7 +486,9 @@ export class QwenRealtimeClient {
     this.pendingInputKinds = [];
     this.inputKindByItemId.clear();
     this.hasPendingStreamAudio = false;
+    this.hasPendingVoiceAudio = false;
     this.liveVoiceMode = false;
+    this.responseActive = false;
   }
 
   private sendSessionUpdate(
@@ -518,6 +552,7 @@ export class QwenRealtimeClient {
 
     if (eventType === "proxy.closed") {
       this.isConfigured = false;
+      this.resetPendingAudioInputs();
       this.socket = null;
       this.options.onStatusChange?.("closed");
       return;
@@ -663,6 +698,7 @@ export class QwenRealtimeClient {
       }
 
       this.finalText = "";
+      this.responseActive = false;
       this.options.onResponseDone?.();
       this.options.onStatusChange?.("configured");
       return;
@@ -671,6 +707,7 @@ export class QwenRealtimeClient {
     if (eventType === "error" || eventType === "proxy.error") {
       const message = getErrorMessage(event);
       this.isConfigured = false;
+      this.responseActive = false;
       this.options.onStatusChange?.("error");
       this.options.onError?.(message);
     }
