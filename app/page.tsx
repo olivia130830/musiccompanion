@@ -149,6 +149,12 @@ function getQwenMomentStatusText(status: QwenMomentStatus) {
   return "无需开启选项；播放后千问会自动听歌曲和歌词。";
 }
 
+export function isPermanentRealtimeError(message: string) {
+  return /DASHSCOPE_API_KEY|API[ _-]?key|401|403|unauthori[sz]ed|forbidden|鉴权|认证失败|权限不足/iu.test(
+    message,
+  );
+}
+
 function normalizeText(text: string) {
   return text
     .trim()
@@ -646,6 +652,11 @@ export default function Home() {
 
   const lastQwenReconnectMsRef = useRef(0);
 
+  const qwenReconnectAttemptRef = useRef(0);
+
+  const qwenReconnectTimeoutRef =
+    useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const scheduledQwenPromptTimeoutRef =
     useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -905,11 +916,18 @@ export default function Home() {
       clearQwenResponseWatchdog();
       clearVoiceResponseWatchdog();
 
-      qwenClientRef.current?.disconnect();
+      if (qwenReconnectTimeoutRef.current) {
+        clearTimeout(qwenReconnectTimeoutRef.current);
+        qwenReconnectTimeoutRef.current = null;
+      }
+
+      const musicClient = qwenClientRef.current;
       qwenClientRef.current = null;
+      musicClient?.disconnect();
       qwenReadyRef.current = false;
-      qwenVoiceClientRef.current?.disconnect();
+      const voiceClient = qwenVoiceClientRef.current;
       qwenVoiceClientRef.current = null;
+      voiceClient?.disconnect();
       voiceCallActiveRef.current = false;
       voiceRecordingActiveRef.current = false;
       voiceResponseActiveRef.current = false;
@@ -1053,12 +1071,53 @@ export default function Home() {
             hasRecentSustainedLiveAudio();
     };
 
+    const scheduleReconnect = (client: QwenRealtimeClient) => {
+      if (
+        qwenClientRef.current !== client ||
+        qwenReconnectTimeoutRef.current
+      ) {
+        return;
+      }
+
+      qwenReconnectAttemptRef.current += 1;
+      const delay = Math.min(
+        8000,
+        500 * 2 ** Math.min(qwenReconnectAttemptRef.current - 1, 4),
+      );
+      setQwenRealtimeError("");
+      setQwenRealtimeStatus("connecting");
+      setQwenMomentStatus("idle");
+      setCompanionReplyStatus("idle");
+      setCompanionReplyError("");
+
+      qwenReconnectTimeoutRef.current = setTimeout(() => {
+        qwenReconnectTimeoutRef.current = null;
+        if (
+          qwenClientRef.current !== client ||
+          document.visibilityState === "hidden" ||
+          !navigator.onLine
+        ) {
+          return;
+        }
+        client.connect();
+      }, delay);
+    };
+
     const client = new QwenRealtimeClient({
       onStatusChange: (status) => {
         if (qwenClientRef.current !== client) return;
-        setQwenRealtimeStatus(status);
+        setQwenRealtimeStatus(
+          status === "error" || status === "closed"
+            ? "connecting"
+            : status,
+        );
 
         if (status === "configured") {
+          if (qwenReconnectTimeoutRef.current) {
+            clearTimeout(qwenReconnectTimeoutRef.current);
+            qwenReconnectTimeoutRef.current = null;
+          }
+          qwenReconnectAttemptRef.current = 0;
           qwenReadyRef.current = true;
           setQwenMomentStatus("connected");
           setQwenRealtimeError("");
@@ -1070,22 +1129,16 @@ export default function Home() {
 
         if (status === "error") {
           qwenReadyRef.current = false;
-          setQwenMomentStatus("error");
         }
 
         if (status === "closed") {
           qwenReadyRef.current = false;
-          qwenClientRef.current = null;
           waitingForQwenResponseRef.current = false;
           activeQwenPromptKindRef.current = null;
           qwenResponseMusicTimeRef.current = null;
           clearQwenResponseWatchdog();
           setIsSendingText(false);
-          setQwenMomentStatus("error");
-          setCompanionReplyStatus("error");
-          setCompanionReplyError(
-            "Realtime 连接已断开，请重新发送或继续播放以重连。",
-          );
+          scheduleReconnect(client);
         }
       },
 
@@ -1184,16 +1237,27 @@ export default function Home() {
         if (qwenClientRef.current !== client) return;
         clearQwenResponseWatchdog();
         setIsSendingText(false);
-        setQwenRealtimeError(message);
-        setCompanionReplyStatus("error");
-        setCompanionReplyError(message);
         qwenReadyRef.current = false;
-        qwenClientRef.current = null;
-        client.disconnect();
         waitingForQwenResponseRef.current = false;
         activeQwenPromptKindRef.current = null;
         qwenResponseMusicTimeRef.current = null;
-        setQwenMomentStatus("error");
+        if (isPermanentRealtimeError(message)) {
+          qwenClientRef.current = null;
+          setQwenRealtimeStatus("error");
+          setQwenRealtimeError(message);
+          setCompanionReplyStatus("error");
+          setCompanionReplyError(message);
+          setQwenMomentStatus("error");
+          client.disconnect();
+          return;
+        }
+
+        setQwenRealtimeError("");
+        setCompanionReplyStatus("idle");
+        setCompanionReplyError("");
+        setQwenMomentStatus("idle");
+        client.disconnect();
+        scheduleReconnect(client);
       },
 
     });
@@ -1228,6 +1292,11 @@ export default function Home() {
       }
 
       const staleClient = qwenClientRef.current;
+      if (qwenReconnectTimeoutRef.current) {
+        clearTimeout(qwenReconnectTimeoutRef.current);
+        qwenReconnectTimeoutRef.current = null;
+      }
+      qwenReconnectAttemptRef.current = 0;
       qwenClientRef.current = null;
       qwenReadyRef.current = false;
       staleClient?.disconnect();
@@ -1584,6 +1653,11 @@ export default function Home() {
     }
     clearQwenResponseWatchdog();
     clearVoiceResponseWatchdog();
+    if (qwenReconnectTimeoutRef.current) {
+      clearTimeout(qwenReconnectTimeoutRef.current);
+      qwenReconnectTimeoutRef.current = null;
+    }
+    qwenReconnectAttemptRef.current = 0;
 
     setPlayback(INITIAL_PLAYBACK);
     setListeningMessages([]);
@@ -1947,7 +2021,9 @@ export default function Home() {
         voiceTurnActiveRef.current = false;
         setIsVoiceCallConnected(false);
         setIsSendingVoice(false);
-        setVoiceInputError("语音连接已断开，请点击麦克风重新连接。");
+        setVoiceInputError("");
+        setCompanionReplyStatus("idle");
+        setCompanionReplyError("");
         void stopRealtimeMicrophone();
         musicPlayerRef.current?.resumeAfterVoiceRecording();
       },
@@ -1986,6 +2062,7 @@ export default function Home() {
 
       onError: (message) => {
         if (qwenVoiceClientRef.current !== client) return;
+        const isPermanent = isPermanentRealtimeError(message);
         clearVoiceResponseWatchdog();
         qwenVoiceClientRef.current = null;
         voiceCallActiveRef.current = false;
@@ -1994,9 +2071,9 @@ export default function Home() {
         setIsVoiceCallConnected(false);
         voiceTurnActiveRef.current = false;
         setIsSendingVoice(false);
-        setVoiceInputError(message);
-        setCompanionReplyStatus("error");
-        setCompanionReplyError(message);
+        setVoiceInputError(isPermanent ? message : "");
+        setCompanionReplyStatus(isPermanent ? "error" : "idle");
+        setCompanionReplyError(isPermanent ? message : "");
         void stopRealtimeMicrophone();
         musicPlayerRef.current?.resumeAfterVoiceRecording();
       },
@@ -2038,6 +2115,8 @@ export default function Home() {
       setIsVoiceCallConnected(true);
       return true;
     } catch (unknownError) {
+      const wasCurrentVoiceClient =
+        qwenVoiceClientRef.current === client;
       if (qwenVoiceClientRef.current === client) {
         qwenVoiceClientRef.current = null;
       }
@@ -2052,7 +2131,9 @@ export default function Home() {
         unknownError instanceof Error
           ? unknownError.message
           : "无法开始语音通话。";
-      setVoiceInputError(message);
+      if (wasCurrentVoiceClient) {
+        setVoiceInputError(message);
+      }
       return false;
     }
   }, [

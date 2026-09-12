@@ -45,6 +45,7 @@ export const QWEN_MAX_OUTPUT_TOKENS = 512;
 const QWEN_PCM_BYTES_PER_SECOND = 16000 * 2;
 const QWEN_PRECONNECT_MUSIC_BUFFER_SECONDS = 20;
 const PROXY_HEARTBEAT_INTERVAL_MS = 15000;
+const SESSION_SETUP_TIMEOUT_MS = 12000;
 
 function getBase64ByteLength(value: string) {
   const paddingLength = value.endsWith("==")
@@ -217,6 +218,8 @@ export class QwenRealtimeClient {
 
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
+  private sessionSetupTimeout: ReturnType<typeof setTimeout> | null = null;
+
   private liveVoiceMode = false;
 
   private pendingInputKinds: QwenAudioInputKind[] = [];
@@ -246,6 +249,7 @@ export class QwenRealtimeClient {
 
     socket.addEventListener("open", () => {
       this.startHeartbeat(socket);
+      this.startSessionSetupWatchdog(socket);
       this.options.onStatusChange?.("connected");
     });
 
@@ -256,6 +260,7 @@ export class QwenRealtimeClient {
     socket.addEventListener("error", () => {
       if (this.socket !== socket) return;
       this.stopHeartbeat();
+      this.stopSessionSetupWatchdog();
       this.isConfigured = false;
       this.resetPendingAudioInputs();
       this.options.onStatusChange?.("error");
@@ -265,6 +270,7 @@ export class QwenRealtimeClient {
     socket.addEventListener("close", () => {
       if (this.socket !== socket) return;
       this.stopHeartbeat();
+      this.stopSessionSetupWatchdog();
       this.isConfigured = false;
       this.resetPendingAudioInputs();
       this.socket = null;
@@ -274,6 +280,7 @@ export class QwenRealtimeClient {
 
   public disconnect() {
     this.stopHeartbeat();
+    this.stopSessionSetupWatchdog();
     if (!this.socket) {
       return;
     }
@@ -549,6 +556,27 @@ export class QwenRealtimeClient {
     this.heartbeatInterval = null;
   }
 
+  private startSessionSetupWatchdog(socket: WebSocket) {
+    this.stopSessionSetupWatchdog();
+    this.sessionSetupTimeout = setTimeout(() => {
+      this.sessionSetupTimeout = null;
+      if (
+        this.socket === socket &&
+        !this.isConfigured &&
+        (socket.readyState === WebSocket.OPEN ||
+          socket.readyState === WebSocket.CONNECTING)
+      ) {
+        socket.close(4000, "Realtime session setup timeout");
+      }
+    }, SESSION_SETUP_TIMEOUT_MS);
+  }
+
+  private stopSessionSetupWatchdog() {
+    if (!this.sessionSetupTimeout) return;
+    clearTimeout(this.sessionSetupTimeout);
+    this.sessionSetupTimeout = null;
+  }
+
   private queueMusicAudio(audioBase64: string) {
     const byteLength = getBase64ByteLength(audioBase64);
     const maxBytes =
@@ -672,6 +700,7 @@ export class QwenRealtimeClient {
     if (eventType === "proxy.closed") {
       const browserSocket = this.socket;
       this.stopHeartbeat();
+      this.stopSessionSetupWatchdog();
       this.isConfigured = false;
       this.resetPendingAudioInputs();
       this.socket = null;
@@ -694,6 +723,7 @@ export class QwenRealtimeClient {
     }
 
     if (eventType === "session.updated") {
+      this.stopSessionSetupWatchdog();
       this.isConfigured = true;
       this.flushQueuedMusicAudio();
       this.options.onStatusChange?.("configured");
