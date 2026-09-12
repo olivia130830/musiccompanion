@@ -148,10 +148,19 @@ wss.on("connection", (browserSocket) => {
 
   browserSocket.on("message", (data) => {
     const text = data.toString();
+    let event = null;
 
     try {
-      JSON.parse(text);
+      event = JSON.parse(text);
     } catch {
+      return;
+    }
+
+    if (event?.type === "proxy.ping") {
+      safeSend(
+        browserSocket,
+        JSON.stringify({ type: "proxy.pong" }),
+      );
       return;
     }
 

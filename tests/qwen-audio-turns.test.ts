@@ -130,6 +130,35 @@ describe("Qwen audio turns", () => {
     });
   });
 
+  it("commits current music together with a typed lyric question", () => {
+    const { client, socket } = createReadyClient();
+
+    expect(client.appendMusicAudio("current-song")).toBe(true);
+    expect(
+      client.sendTextMessage(
+        "刚才唱了什么？",
+        "直接回答歌词",
+        false,
+        true,
+      ),
+    ).toBe(true);
+
+    const events = socket.events();
+    const commitIndex = events.findIndex(
+      (event) => event.type === "input_audio_buffer.commit",
+    );
+    const textIndex = events.findIndex(
+      (event) => event.type === "conversation.item.create",
+    );
+    const responseIndex = events.findIndex(
+      (event) => event.type === "response.create",
+    );
+    expect(commitIndex).toBeGreaterThanOrEqual(0);
+    expect(textIndex).toBeGreaterThan(commitIndex);
+    expect(responseIndex).toBeGreaterThan(textIndex);
+    expect(client.getPendingMusicDurationSeconds()).toBe(0);
+  });
+
   it("commits already-streamed live music without resending it", () => {
     const { client, socket } = createReadyClient();
 
