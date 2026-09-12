@@ -697,6 +697,7 @@ export default function Home() {
     status: liveListeningStatus,
     error: liveListeningError,
     label: liveListeningLabel,
+    compatibilityNotice: liveListeningCompatibilityNotice,
     setMuted: setListeningMicrophoneMuted,
     start: startLiveListening,
     stop: stopLiveListening,
@@ -2380,6 +2381,12 @@ export default function Home() {
                       ? "选择正在播放音乐的标签页或屏幕，并勾选“共享音频”。不会使用摄像头。"
                       : "用手机、音箱或收音机外放音乐，AI 会通过麦克风和你一起听。"}
             </p>
+            {listeningInputMode === "local_speaker" &&
+              liveListeningCompatibilityNotice && (
+                <p className="listening-source-help" role="status">
+                  {liveListeningCompatibilityNotice}
+                </p>
+              )}
             {listeningInputMode !== "file" && liveListeningError && (
               <p className="voice-record-error" role="alert">
                 {liveListeningError}
