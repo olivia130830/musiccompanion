@@ -166,6 +166,40 @@ describe("Qwen audio turns", () => {
     expect(client.commitMusicStream("listen again")).toBe(false);
   });
 
+  it("buffers music while the remote session is still configuring", () => {
+    const holder: { current: FakeWebSocket | null } = { current: null };
+    globalThis.WebSocket = class extends FakeWebSocket {
+      constructor() {
+        super();
+        holder.current = this;
+      }
+    } as unknown as typeof WebSocket;
+
+    const client = new QwenRealtimeClient({ url: "ws://test" });
+    client.connect();
+    const socket = holder.current;
+    if (!socket) throw new Error("Fake WebSocket was not created");
+    socket.open();
+
+    expect(client.appendMusicAudio("AAAA")).toBe(true);
+    expect(client.getPendingMusicDurationSeconds()).toBeCloseTo(
+      3 / 32000,
+    );
+    expect(
+      socket.events().some(
+        (event) => event.type === "input_audio_buffer.append",
+      ),
+    ).toBe(false);
+
+    socket.message({ type: "session.updated" });
+    expect(socket.events().at(-1)).toEqual({
+      type: "input_audio_buffer.append",
+      audio: "AAAA",
+    });
+    expect(client.clearInputAudio()).toBe(true);
+    expect(client.getPendingMusicDurationSeconds()).toBe(0);
+  });
+
   it("drops buffered live music when playback is interrupted", () => {
     const { client, socket } = createReadyClient();
 

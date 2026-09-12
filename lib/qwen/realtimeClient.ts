@@ -42,6 +42,18 @@ export const QWEN_AUDIO_CHUNK_BASE64_LENGTH = 64 * 1024;
 // thousands of output tokens without shortening the intended reply.
 export const QWEN_MAX_OUTPUT_TOKENS = 512;
 
+const QWEN_PCM_BYTES_PER_SECOND = 16000 * 2;
+const QWEN_PRECONNECT_MUSIC_BUFFER_SECONDS = 20;
+
+function getBase64ByteLength(value: string) {
+  const paddingLength = value.endsWith("==")
+    ? 2
+    : value.endsWith("=")
+      ? 1
+      : 0;
+  return Math.max(0, Math.floor((value.length * 3) / 4) - paddingLength);
+}
+
 type ProxyPageLocation = Pick<
   Location,
   "host" | "hostname" | "port" | "protocol"
@@ -194,6 +206,12 @@ export class QwenRealtimeClient {
 
   private hasPendingVoiceAudio = false;
 
+  private pendingMusicAudioBytes = 0;
+
+  private queuedMusicAudio: string[] = [];
+
+  private queuedMusicAudioBytes = 0;
+
   private responseActive = false;
 
   private liveVoiceMode = false;
@@ -273,13 +291,32 @@ export class QwenRealtimeClient {
   }
 
   public appendMusicAudio(audioBase64: string) {
-    if (!audioBase64 || !this.isReady()) {
+    if (!audioBase64 || !this.socket) {
       return false;
     }
 
+    if (!this.isReady()) {
+      if (
+        this.socket.readyState !== WebSocket.CONNECTING &&
+        this.socket.readyState !== WebSocket.OPEN
+      ) {
+        return false;
+      }
+      this.queueMusicAudio(audioBase64);
+      return true;
+    }
+
     this.appendAudio(audioBase64);
+    this.pendingMusicAudioBytes += getBase64ByteLength(audioBase64);
     this.hasPendingStreamAudio = true;
     return true;
+  }
+
+  public getPendingMusicDurationSeconds() {
+    return (
+      (this.pendingMusicAudioBytes + this.queuedMusicAudioBytes) /
+      QWEN_PCM_BYTES_PER_SECOND
+    );
   }
 
   public startVoiceCall(instructions: string) {
@@ -328,6 +365,9 @@ export class QwenRealtimeClient {
     this.sendEvent({ type: "input_audio_buffer.clear" });
     this.hasPendingStreamAudio = false;
     this.hasPendingVoiceAudio = false;
+    this.pendingMusicAudioBytes = 0;
+    this.queuedMusicAudio = [];
+    this.queuedMusicAudioBytes = 0;
     return true;
   }
 
@@ -347,6 +387,7 @@ export class QwenRealtimeClient {
     this.pendingInputKinds.push("music");
     this.sendEvent({ type: "input_audio_buffer.commit" });
     this.hasPendingStreamAudio = false;
+    this.pendingMusicAudioBytes = 0;
     this.createResponse(responseWithAudio);
     return true;
   }
@@ -468,6 +509,37 @@ export class QwenRealtimeClient {
     }
   }
 
+  private queueMusicAudio(audioBase64: string) {
+    const byteLength = getBase64ByteLength(audioBase64);
+    const maxBytes =
+      QWEN_PCM_BYTES_PER_SECOND *
+      QWEN_PRECONNECT_MUSIC_BUFFER_SECONDS;
+    this.queuedMusicAudio.push(audioBase64);
+    this.queuedMusicAudioBytes += byteLength;
+
+    while (
+      this.queuedMusicAudioBytes > maxBytes &&
+      this.queuedMusicAudio.length > 1
+    ) {
+      const removed = this.queuedMusicAudio.shift();
+      if (removed) {
+        this.queuedMusicAudioBytes -= getBase64ByteLength(removed);
+      }
+    }
+  }
+
+  private flushQueuedMusicAudio() {
+    if (!this.isReady() || !this.queuedMusicAudio.length) return;
+
+    for (const audioBase64 of this.queuedMusicAudio) {
+      this.appendAudio(audioBase64);
+    }
+    this.pendingMusicAudioBytes += this.queuedMusicAudioBytes;
+    this.queuedMusicAudio = [];
+    this.queuedMusicAudioBytes = 0;
+    this.hasPendingStreamAudio = true;
+  }
+
   private createResponse(responseWithAudio = true) {
     this.responseActive = true;
     this.finalText = "";
@@ -487,6 +559,9 @@ export class QwenRealtimeClient {
     this.inputKindByItemId.clear();
     this.hasPendingStreamAudio = false;
     this.hasPendingVoiceAudio = false;
+    this.pendingMusicAudioBytes = 0;
+    this.queuedMusicAudio = [];
+    this.queuedMusicAudioBytes = 0;
     this.liveVoiceMode = false;
     this.responseActive = false;
   }
@@ -568,6 +643,7 @@ export class QwenRealtimeClient {
 
     if (eventType === "session.updated") {
       this.isConfigured = true;
+      this.flushQueuedMusicAudio();
       this.options.onStatusChange?.("configured");
       return;
     }

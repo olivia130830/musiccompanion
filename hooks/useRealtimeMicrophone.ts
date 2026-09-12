@@ -80,10 +80,7 @@ export function useRealtimeMicrophone(
     try {
       const supported =
         navigator.mediaDevices.getSupportedConstraints() as VoiceSupportedConstraints;
-      const baseConstraints = getVoiceAudioConstraints(supported);
-      const constraints = supported.suppressLocalAudioPlayback
-        ? { ...baseConstraints, suppressLocalAudioPlayback: false }
-        : baseConstraints;
+      const constraints = getVoiceAudioConstraints(supported);
       let stream = await navigator.mediaDevices.getUserMedia({
         audio: constraints,
       });
