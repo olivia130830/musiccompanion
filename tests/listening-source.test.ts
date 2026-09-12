@@ -31,7 +31,7 @@ describe("realtime listening source constraints", () => {
 
   it("requests the computer audio source", () => {
     expect(getSystemAudioCaptureOptions()).toMatchObject({
-      video: true,
+      video: { displaySurface: "browser" },
       audio: true,
       systemAudio: "include",
       windowAudio: "system",
@@ -115,7 +115,7 @@ describe("realtime listening source constraints", () => {
         getUserMedia: async () => stream,
       }),
     ).resolves.toBe(stream);
-    expect(videoStopped).toBe(true);
+    expect(videoStopped).toBe(false);
   });
 
   it("adds Electron desktop audio when VS Code only returns video", async () => {
@@ -150,7 +150,7 @@ describe("realtime listening source constraints", () => {
       ),
     ).resolves.toBe(displayStream);
     expect(displayStream.getAudioTracks()).toEqual([desktopAudioTrack]);
-    expect(videoStopped).toBe(true);
+    expect(videoStopped).toBe(false);
   });
 
   it("uses Electron desktop audio when display capture is unsupported", async () => {
