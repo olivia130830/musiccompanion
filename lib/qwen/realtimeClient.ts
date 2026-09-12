@@ -408,6 +408,19 @@ export class QwenRealtimeClient {
     return true;
   }
 
+  public commitPendingMusicContext() {
+    if (
+      !this.isReady() ||
+      !this.hasPendingStreamAudio ||
+      this.responseActive
+    ) {
+      return false;
+    }
+
+    this.commitPendingMusicInput();
+    return true;
+  }
+
   public isReady() {
     return (
       this.isConfigured &&
