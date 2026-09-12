@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import {
   calculateAudioRms,
+  canFallbackToMicrophone,
   captureSystemAudio,
   getElectronDesktopAudioConstraints,
   getMusicMicrophoneConstraints,
   getSystemAudioCaptureOptions,
+  getSystemAudioFallbackNotice,
   isElectronDesktopAudioHost,
+  shouldUseMicrophoneSystemAudioFallback,
 } from "@/hooks/useRealtimeListeningSource";
 
 describe("realtime listening source constraints", () => {
@@ -30,7 +33,38 @@ describe("realtime listening source constraints", () => {
     expect(getSystemAudioCaptureOptions()).toMatchObject({
       video: true,
       audio: true,
+      systemAudio: "include",
+      windowAudio: "system",
     });
+  });
+
+  it("uses microphone compatibility mode for Safari and missing APIs", () => {
+    const safari =
+      "Mozilla/5.0 (Macintosh) AppleWebKit/605.1.15 Version/18.6 Safari/605.1.15";
+    expect(shouldUseMicrophoneSystemAudioFallback(safari, true)).toBe(true);
+    expect(shouldUseMicrophoneSystemAudioFallback("Unknown", false)).toBe(
+      true,
+    );
+    expect(getSystemAudioFallbackNotice(safari)).toContain("Safari");
+  });
+
+  it("keeps direct system capture for Chromium-based Baidu browser", () => {
+    const baidu =
+      "Mozilla/5.0 Chrome/126.0.0.0 Safari/537.36 BIDUBrowser/13.50.0.10";
+    expect(shouldUseMicrophoneSystemAudioFallback(baidu, true)).toBe(false);
+  });
+
+  it("falls back only for unavailable APIs, not denied permission", () => {
+    expect(
+      canFallbackToMicrophone(
+        new DOMException("Not supported", "NotSupportedError"),
+      ),
+    ).toBe(true);
+    expect(
+      canFallbackToMicrophone(
+        new DOMException("Permission denied", "NotAllowedError"),
+      ),
+    ).toBe(false);
   });
 
   it("recognizes VS Code as an Electron desktop audio host", () => {

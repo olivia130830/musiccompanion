@@ -17,6 +17,19 @@ export type LiveListeningStatus =
   | "requesting_permission"
   | "listening";
 
+type ExtendedDisplayMediaStreamOptions = DisplayMediaStreamOptions & {
+  systemAudio?: "include" | "exclude";
+  windowAudio?: "exclude" | "window" | "system";
+  surfaceSwitching?: "include" | "exclude";
+};
+
+export class SystemAudioUnavailableError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "SystemAudioUnavailableError";
+  }
+}
+
 export function calculateAudioRms(samples: Float32Array) {
   if (samples.length === 0) return 0;
 
@@ -36,12 +49,48 @@ export function getMusicMicrophoneConstraints(): MediaTrackConstraints {
   };
 }
 
-export function getSystemAudioCaptureOptions(): DisplayMediaStreamOptions {
+export function getSystemAudioCaptureOptions(): ExtendedDisplayMediaStreamOptions {
   return {
     // getDisplayMedia 规范要求同时请求屏幕画面；这是屏幕轨道，不是摄像头。
     video: true,
     audio: true,
+    systemAudio: "include",
+    windowAudio: "system",
+    surfaceSwitching: "include",
   };
+}
+
+export function shouldUseMicrophoneSystemAudioFallback(
+  userAgent: string,
+  hasDisplayMedia: boolean,
+) {
+  const isAppleMobile = /\b(?:iPhone|iPad|iPod)\b/i.test(userAgent);
+  const isSafari =
+    /\bSafari\//i.test(userAgent) &&
+    !/\b(?:Chrome|Chromium|CriOS|Edg|EdgiOS|OPR|OPiOS|Firefox|FxiOS|BIDUBrowser)\//i.test(
+      userAgent,
+    );
+  return !hasDisplayMedia || isAppleMobile || isSafari;
+}
+
+export function getSystemAudioFallbackNotice(userAgent: string) {
+  const browserName = /\b(?:iPhone|iPad|iPod)\b/i.test(userAgent)
+    ? "iPhone/iPad 浏览器"
+    : /\bSafari\//i.test(userAgent) &&
+        !/\b(?:Chrome|Chromium|CriOS|Edg|OPR|Firefox|BIDUBrowser)\//i.test(
+          userAgent,
+        )
+      ? "Safari"
+      : "当前浏览器";
+  return `${browserName}暂不向网页提供系统输出音轨，已自动切换到麦克风兼容模式；请用扬声器播放音乐，不要戴耳机。`;
+}
+
+export function canFallbackToMicrophone(error: unknown) {
+  return (
+    error instanceof SystemAudioUnavailableError ||
+    (error instanceof DOMException && error.name === "NotSupportedError") ||
+    (error instanceof Error && /not supported/i.test(error.message))
+  );
 }
 
 export function isElectronDesktopAudioHost(
@@ -129,7 +178,7 @@ export async function captureSystemAudio(
 
   if (!stream.getAudioTracks()[0]) {
     stream.getTracks().forEach((track) => track.stop());
-    throw new Error(
+    throw new SystemAudioUnavailableError(
       "没有获得系统音频。请选择正在播放音乐的标签页或屏幕，并勾选“共享音频”。",
     );
   }
@@ -167,6 +216,7 @@ export function useRealtimeListeningSource(
   const [status, setStatus] = useState<LiveListeningStatus>("idle");
   const [error, setError] = useState("");
   const [label, setLabel] = useState("");
+  const [compatibilityNotice, setCompatibilityNotice] = useState("");
   const [isMuted, setIsMutedState] = useState(false);
   const streamRef = useRef<MediaStream | null>(null);
   const contextRef = useRef<AudioContext | null>(null);
@@ -195,6 +245,7 @@ export function useRealtimeListeningSource(
     if (context && context.state !== "closed") void context.close();
     setStatus("idle");
     setLabel("");
+    setCompatibilityNotice("");
   }, []);
 
   const setMuted = useCallback((muted: boolean) => {
@@ -213,6 +264,7 @@ export function useRealtimeListeningSource(
       captureRequestIdRef.current = captureRequestId;
       setStatus("requesting_permission");
       setError("");
+      setCompatibilityNotice("");
 
       try {
         if (!window.isSecureContext) {
@@ -223,17 +275,40 @@ export function useRealtimeListeningSource(
         }
 
         let stream: MediaStream;
+        let actualSource = source;
+        let usedMicrophoneFallback = false;
         if (source === "system_audio") {
-          if (!navigator.mediaDevices.getDisplayMedia) {
-            throw new Error("当前浏览器不支持获取系统声音。");
-          }
-          stream = await captureSystemAudio(
-            navigator.mediaDevices,
-            isElectronDesktopAudioHost(
+          const shouldUseFallback =
+            shouldUseMicrophoneSystemAudioFallback(
               navigator.userAgent,
-              document.referrer,
-            ),
-          );
+              Boolean(navigator.mediaDevices.getDisplayMedia),
+            );
+          if (shouldUseFallback) {
+            stream = await navigator.mediaDevices.getUserMedia({
+              audio: getMusicMicrophoneConstraints(),
+            });
+            actualSource = "microphone";
+            usedMicrophoneFallback = true;
+          } else {
+            try {
+              stream = await captureSystemAudio(
+                navigator.mediaDevices,
+                isElectronDesktopAudioHost(
+                  navigator.userAgent,
+                  document.referrer,
+                ),
+              );
+            } catch (error) {
+              if (!canFallbackToMicrophone(error)) {
+                throw error;
+              }
+              stream = await navigator.mediaDevices.getUserMedia({
+                audio: getMusicMicrophoneConstraints(),
+              });
+              actualSource = "microphone";
+              usedMicrophoneFallback = true;
+            }
+          }
         } else {
           stream = await navigator.mediaDevices.getUserMedia({
             audio: getMusicMicrophoneConstraints(),
@@ -247,7 +322,7 @@ export function useRealtimeListeningSource(
 
         let audioTrack = stream.getAudioTracks()[0];
         if (
-          source === "microphone" &&
+          actualSource === "microphone" &&
           audioTrack &&
           isLikelySystemAudioInput(audioTrack.label)
         ) {
@@ -302,7 +377,8 @@ export function useRealtimeListeningSource(
         sourceNode.connect(processor);
         processor.connect(context.destination);
 
-        isMutedRef.current = source === "microphone" && initiallyMuted;
+        isMutedRef.current =
+          actualSource === "microphone" && initiallyMuted;
         setIsMutedState(isMutedRef.current);
         audioTrack.enabled = !isMutedRef.current;
         audioTrack.addEventListener("ended", stop, { once: true });
@@ -312,8 +388,15 @@ export function useRealtimeListeningSource(
         processorRef.current = processor;
         activeRef.current = true;
         setLabel(
-          audioTrack.label ||
+          usedMicrophoneFallback
+            ? "麦克风兼容模式"
+            : audioTrack.label ||
             (source === "system_audio" ? "系统声音" : "默认麦克风"),
+        );
+        setCompatibilityNotice(
+          usedMicrophoneFallback
+            ? getSystemAudioFallbackNotice(navigator.userAgent)
+            : "",
         );
         setStatus("listening");
         return true;
@@ -336,6 +419,7 @@ export function useRealtimeListeningSource(
     status,
     error,
     label,
+    compatibilityNotice,
     isMuted,
     setMuted,
     start,
