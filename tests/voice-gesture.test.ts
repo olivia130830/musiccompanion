@@ -1,20 +1,20 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  shouldCancelVoiceGesture,
-  shouldUseTapToRecord,
-} from "@/components/UserReplyBox";
+import { getTapRecordingAction } from "@/components/UserReplyBox";
 
-describe("voice recording gesture", () => {
-  it("cancels only after moving upward by the gesture threshold", () => {
-    expect(shouldCancelVoiceGesture(200, 161)).toBe(false);
-    expect(shouldCancelVoiceGesture(200, 160)).toBe(true);
-    expect(shouldCancelVoiceGesture(200, 220)).toBe(false);
+describe("tap voice recording", () => {
+  it("starts on the first tap and stops on the second tap", () => {
+    expect(getTapRecordingAction(false, "idle", false)).toBe("start");
+    expect(getTapRecordingAction(true, "recording", false)).toBe("stop");
   });
 
-  it("uses tap-to-start and tap-to-send only for touch pointers", () => {
-    expect(shouldUseTapToRecord("touch")).toBe(true);
-    expect(shouldUseTapToRecord("mouse")).toBe(false);
-    expect(shouldUseTapToRecord("pen")).toBe(false);
+  it("can stop while microphone permission or startup is pending", () => {
+    expect(
+      getTapRecordingAction(true, "requesting_permission", true),
+    ).toBe("stop");
+  });
+
+  it("restarts immediately when a backgrounded stream became stale", () => {
+    expect(getTapRecordingAction(true, "idle", false)).toBe("start");
   });
 });
