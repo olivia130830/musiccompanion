@@ -52,19 +52,26 @@ export function shouldCancelVoiceGesture(
   return startY - currentY >= CANCEL_GESTURE_DISTANCE;
 }
 
+export function shouldUseTapToRecord(pointerType: string) {
+  return pointerType === "touch";
+}
+
 function getStatusText(
   disabled: boolean,
   status: VoiceInputStatus,
   isPressing: boolean,
   isCancelling: boolean,
+  usesTapToRecord: boolean,
 ) {
   if (disabled) return "先选择一首音乐";
   if (status === "requesting_permission") return "正在连接麦克风…";
   if (isPressing && isCancelling) return "松开取消";
-  if (status === "recording") return "松开发送，上移取消";
-  if (status === "sending") return "正在把这句话交给 AI…";
-  if (status === "speaking") return "AI 正在回应你";
-  return "按住麦克风说话";
+  if (status === "recording") {
+    return usesTapToRecord ? "再次点击发送" : "松开发送，上移取消";
+  }
+  if (status === "sending") return "AI 正在思考；点击麦克风可以打断";
+  if (status === "speaking") return "AI 正在回应；点击麦克风可以打断";
+  return usesTapToRecord ? "点击麦克风开始说话" : "按住麦克风说话";
 }
 
 export default function UserReplyBox({
@@ -94,6 +101,7 @@ export default function UserReplyBox({
   const [textDraft, setTextDraft] = useState("");
   const [isPressing, setIsPressing] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
+  const [usesTapToRecord, setUsesTapToRecord] = useState(false);
   const gestureActiveRef = useRef(false);
   const pointerIdRef = useRef<number | null>(null);
   const startYRef = useRef(0);
@@ -102,7 +110,6 @@ export default function UserReplyBox({
   const cancelRequestedRef = useRef(false);
   const finishInFlightRef = useRef(false);
   const isRecording = status === "recording";
-  const isBusy = status === "sending";
 
   const handleTextSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -137,8 +144,7 @@ export default function UserReplyBox({
       startPendingRef.current ||
       finishInFlightRef.current ||
       disabled ||
-      isMicrophoneMuted ||
-      isBusy
+      isMicrophoneMuted
     ) {
       return;
     }
@@ -178,8 +184,32 @@ export default function UserReplyBox({
   const handlePointerDown = (
     event: PointerEvent<HTMLButtonElement>,
   ) => {
-    if (event.button !== 0 || gestureActiveRef.current) return;
+    if (event.button !== 0) return;
     event.preventDefault();
+
+    if (shouldUseTapToRecord(event.pointerType)) {
+      setUsesTapToRecord(true);
+      if (gestureActiveRef.current) {
+        if (status === "recording" || startPendingRef.current) {
+          endRecording(false);
+        } else {
+          // A mobile browser may kill the stream while the page is in the
+          // background. Discard the stale gesture so the next tap reconnects
+          // immediately instead of requiring an unexplained extra tap.
+          gestureActiveRef.current = false;
+          recorderStartedRef.current = false;
+          cancelRequestedRef.current = false;
+          setIsPressing(false);
+          setIsCancelling(false);
+          beginRecording();
+        }
+      } else {
+        beginRecording();
+      }
+      return;
+    }
+
+    if (gestureActiveRef.current) return;
     pointerIdRef.current = event.pointerId;
     startYRef.current = event.clientY;
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -292,9 +322,13 @@ export default function UserReplyBox({
             isCancelling ? " voice-record-button-cancelling" : ""
           }`}
           type="button"
-          disabled={disabled || isBusy || isMicrophoneMuted}
+          disabled={disabled || isMicrophoneMuted}
           aria-pressed={isPressing}
-          aria-label="按住说话，松开发送，上移取消"
+          aria-label={
+            usesTapToRecord
+              ? "点击开始说话，再次点击发送"
+              : "按住说话，松开发送，上移取消"
+          }
           onContextMenu={(event) => event.preventDefault()}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
@@ -327,6 +361,7 @@ export default function UserReplyBox({
                 status,
                 isPressing,
                 isCancelling,
+                usesTapToRecord,
               )}
       </p>
 

@@ -95,10 +95,16 @@ function handleConnection(browserSocket: WebSocket) {
 
   browserSocket.on("message", (data: WebSocketData) => {
     const text = data.toString();
+    let event: { type?: string };
 
     try {
-      JSON.parse(text);
+      event = JSON.parse(text) as { type?: string };
     } catch {
+      return;
+    }
+
+    if (event.type === "proxy.ping") {
+      sendProxyEvent(browserSocket, { type: "proxy.pong" });
       return;
     }
 
