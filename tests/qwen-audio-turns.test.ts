@@ -195,6 +195,30 @@ describe("Qwen audio turns", () => {
     expect(client.commitMusicStream("listen again")).toBe(false);
   });
 
+  it("commits recent music as context before a microphone turn", () => {
+    const { client, socket } = createReadyClient();
+
+    expect(client.startVoiceCall("answer the user's music question")).toBe(
+      true,
+    );
+    socket.message({ type: "session.updated" });
+    expect(client.appendMusicAudio("recent-system-music")).toBe(true);
+    expect(client.commitPendingMusicContext()).toBe(true);
+    expect(client.appendVoiceAudio("user-question")).toBe(true);
+    expect(client.commitVoiceTurn()).toBe(true);
+
+    const events = socket.events();
+    const commits = events
+      .map((event, index) => ({ event, index }))
+      .filter(({ event }) => event.type === "input_audio_buffer.commit");
+    const responseIndex = events.findIndex(
+      (event) => event.type === "response.create",
+    );
+    expect(commits).toHaveLength(2);
+    expect(commits[0].index).toBeLessThan(commits[1].index);
+    expect(commits[1].index).toBeLessThan(responseIndex);
+  });
+
   it("buffers music while the remote session is still configuring", () => {
     const holder: { current: FakeWebSocket | null } = { current: null };
     globalThis.WebSocket = class extends FakeWebSocket {

@@ -21,6 +21,7 @@ type ExtendedDisplayMediaStreamOptions = DisplayMediaStreamOptions & {
   systemAudio?: "include" | "exclude";
   windowAudio?: "exclude" | "window" | "system";
   surfaceSwitching?: "include" | "exclude";
+  selfBrowserSurface?: "include" | "exclude";
 };
 
 export class SystemAudioUnavailableError extends Error {
@@ -52,11 +53,14 @@ export function getMusicMicrophoneConstraints(): MediaTrackConstraints {
 export function getSystemAudioCaptureOptions(): ExtendedDisplayMediaStreamOptions {
   return {
     // getDisplayMedia 规范要求同时请求屏幕画面；这是屏幕轨道，不是摄像头。
-    video: true,
+    video: {
+      displaySurface: "browser",
+    },
     audio: true,
     systemAudio: "include",
     windowAudio: "system",
     surfaceSwitching: "include",
+    selfBrowserSurface: "exclude",
   };
 }
 
@@ -183,7 +187,13 @@ export async function captureSystemAudio(
     );
   }
 
-  stream.getVideoTracks().forEach((track) => track.stop());
+  // Keep the required display-capture track alive for the lifetime of the
+  // stream. Some Chromium/OS combinations end the associated audio session
+  // when its display track is stopped. Disabling it prevents frame processing
+  // while `stop()` still closes every track when listening ends.
+  stream.getVideoTracks().forEach((track) => {
+    track.enabled = false;
+  });
   return stream;
 }
 
