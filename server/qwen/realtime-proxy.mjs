@@ -99,6 +99,12 @@ wss.on("connection", (browserSocket) => {
       return;
     }
 
+    if (event.type === "response.done" && event.response?.usage) {
+      console.log(
+        `[Qwen Token Usage] ${JSON.stringify(event.response.usage)}`,
+      );
+    }
+
     safeSend(browserSocket, text);
   });
 

@@ -42,6 +42,18 @@ export const QWEN_AUDIO_CHUNK_BASE64_LENGTH = 64 * 1024;
 // thousands of output tokens without shortening the intended reply.
 export const QWEN_MAX_OUTPUT_TOKENS = 512;
 
+const QWEN_PCM_BYTES_PER_SECOND = 16000 * 2;
+const QWEN_PRECONNECT_MUSIC_BUFFER_SECONDS = 20;
+
+function getBase64ByteLength(value: string) {
+  const paddingLength = value.endsWith("==")
+    ? 2
+    : value.endsWith("=")
+      ? 1
+      : 0;
+  return Math.max(0, Math.floor((value.length * 3) / 4) - paddingLength);
+}
+
 type ProxyPageLocation = Pick<
   Location,
   "host" | "hostname" | "port" | "protocol"
@@ -192,6 +204,16 @@ export class QwenRealtimeClient {
 
   private hasPendingStreamAudio = false;
 
+  private hasPendingVoiceAudio = false;
+
+  private pendingMusicAudioBytes = 0;
+
+  private queuedMusicAudio: string[] = [];
+
+  private queuedMusicAudioBytes = 0;
+
+  private responseActive = false;
+
   private liveVoiceMode = false;
 
   private pendingInputKinds: QwenAudioInputKind[] = [];
@@ -255,7 +277,11 @@ export class QwenRealtimeClient {
   }
 
   public cancelResponse() {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+    if (
+      !this.socket ||
+      this.socket.readyState !== WebSocket.OPEN ||
+      !this.responseActive
+    ) {
       return false;
     }
 
@@ -265,13 +291,32 @@ export class QwenRealtimeClient {
   }
 
   public appendMusicAudio(audioBase64: string) {
-    if (!audioBase64 || !this.isReady()) {
+    if (!audioBase64 || !this.socket) {
       return false;
     }
 
+    if (!this.isReady()) {
+      if (
+        this.socket.readyState !== WebSocket.CONNECTING &&
+        this.socket.readyState !== WebSocket.OPEN
+      ) {
+        return false;
+      }
+      this.queueMusicAudio(audioBase64);
+      return true;
+    }
+
     this.appendAudio(audioBase64);
+    this.pendingMusicAudioBytes += getBase64ByteLength(audioBase64);
     this.hasPendingStreamAudio = true;
     return true;
+  }
+
+  public getPendingMusicDurationSeconds() {
+    return (
+      (this.pendingMusicAudioBytes + this.queuedMusicAudioBytes) /
+      QWEN_PCM_BYTES_PER_SECOND
+    );
   }
 
   public startVoiceCall(instructions: string) {
@@ -279,9 +324,9 @@ export class QwenRealtimeClient {
 
     this.liveVoiceMode = true;
     this.isConfigured = false;
-    this.sendSessionUpdate(instructions, true, {
-      type: "semantic_vad",
-    });
+    // Voice turns are controlled by the press-to-talk button. Manual commit
+    // avoids server VAD mistaking the song or the AI's own playback for speech.
+    this.sendSessionUpdate(instructions, true, null);
     return true;
   }
 
@@ -291,6 +336,23 @@ export class QwenRealtimeClient {
     }
 
     this.appendAudio(audioBase64);
+    this.hasPendingVoiceAudio = true;
+    return true;
+  }
+
+  public commitVoiceTurn() {
+    if (
+      !this.isReady() ||
+      !this.hasPendingVoiceAudio ||
+      this.responseActive
+    ) {
+      return false;
+    }
+
+    this.pendingInputKinds.push("voice");
+    this.sendEvent({ type: "input_audio_buffer.commit" });
+    this.hasPendingVoiceAudio = false;
+    this.createResponse(true);
     return true;
   }
 
@@ -302,6 +364,10 @@ export class QwenRealtimeClient {
 
     this.sendEvent({ type: "input_audio_buffer.clear" });
     this.hasPendingStreamAudio = false;
+    this.hasPendingVoiceAudio = false;
+    this.pendingMusicAudioBytes = 0;
+    this.queuedMusicAudio = [];
+    this.queuedMusicAudioBytes = 0;
     return true;
   }
 
@@ -309,7 +375,11 @@ export class QwenRealtimeClient {
     instructions: string,
     responseWithAudio = true,
   ) {
-    if (!this.isReady() || !this.hasPendingStreamAudio) {
+    if (
+      !this.isReady() ||
+      !this.hasPendingStreamAudio ||
+      this.responseActive
+    ) {
       return false;
     }
 
@@ -317,6 +387,7 @@ export class QwenRealtimeClient {
     this.pendingInputKinds.push("music");
     this.sendEvent({ type: "input_audio_buffer.commit" });
     this.hasPendingStreamAudio = false;
+    this.pendingMusicAudioBytes = 0;
     this.createResponse(responseWithAudio);
     return true;
   }
@@ -336,7 +407,7 @@ export class QwenRealtimeClient {
   ) {
     const cleanText = text.trim();
 
-    if (!cleanText || !this.isReady()) {
+    if (!cleanText || !this.isReady() || this.responseActive) {
       return false;
     }
 
@@ -356,6 +427,7 @@ export class QwenRealtimeClient {
     });
 
     this.finalText = "";
+    this.responseActive = true;
 
     this.sendEvent({
       type: "response.create",
@@ -400,7 +472,9 @@ export class QwenRealtimeClient {
     instructions: string,
     inputKind: QwenAudioInputKind,
   ) {
-    if (!audioBase64 || !this.isReady()) return false;
+    if (!audioBase64 || !this.isReady() || this.responseActive) {
+      return false;
+    }
 
     this.sendSessionUpdate(instructions, inputKind === "voice");
     this.commitAudioInput(audioBase64, inputKind);
@@ -435,7 +509,39 @@ export class QwenRealtimeClient {
     }
   }
 
+  private queueMusicAudio(audioBase64: string) {
+    const byteLength = getBase64ByteLength(audioBase64);
+    const maxBytes =
+      QWEN_PCM_BYTES_PER_SECOND *
+      QWEN_PRECONNECT_MUSIC_BUFFER_SECONDS;
+    this.queuedMusicAudio.push(audioBase64);
+    this.queuedMusicAudioBytes += byteLength;
+
+    while (
+      this.queuedMusicAudioBytes > maxBytes &&
+      this.queuedMusicAudio.length > 1
+    ) {
+      const removed = this.queuedMusicAudio.shift();
+      if (removed) {
+        this.queuedMusicAudioBytes -= getBase64ByteLength(removed);
+      }
+    }
+  }
+
+  private flushQueuedMusicAudio() {
+    if (!this.isReady() || !this.queuedMusicAudio.length) return;
+
+    for (const audioBase64 of this.queuedMusicAudio) {
+      this.appendAudio(audioBase64);
+    }
+    this.pendingMusicAudioBytes += this.queuedMusicAudioBytes;
+    this.queuedMusicAudio = [];
+    this.queuedMusicAudioBytes = 0;
+    this.hasPendingStreamAudio = true;
+  }
+
   private createResponse(responseWithAudio = true) {
+    this.responseActive = true;
     this.finalText = "";
     this.sendEvent({
       type: "response.create",
@@ -452,14 +558,21 @@ export class QwenRealtimeClient {
     this.pendingInputKinds = [];
     this.inputKindByItemId.clear();
     this.hasPendingStreamAudio = false;
+    this.hasPendingVoiceAudio = false;
+    this.pendingMusicAudioBytes = 0;
+    this.queuedMusicAudio = [];
+    this.queuedMusicAudioBytes = 0;
     this.liveVoiceMode = false;
+    this.responseActive = false;
   }
 
   private sendSessionUpdate(
     instructions = DEFAULT_INSTRUCTIONS,
     enableInputTranscription = false,
     turnDetection: null | {
-      type: "semantic_vad";
+      type: "server_vad";
+      threshold: number;
+      silence_duration_ms: number;
     } = null,
   ) {
     this.sendEvent({
@@ -514,6 +627,7 @@ export class QwenRealtimeClient {
 
     if (eventType === "proxy.closed") {
       this.isConfigured = false;
+      this.resetPendingAudioInputs();
       this.socket = null;
       this.options.onStatusChange?.("closed");
       return;
@@ -529,6 +643,7 @@ export class QwenRealtimeClient {
 
     if (eventType === "session.updated") {
       this.isConfigured = true;
+      this.flushQueuedMusicAudio();
       this.options.onStatusChange?.("configured");
       return;
     }
@@ -659,6 +774,7 @@ export class QwenRealtimeClient {
       }
 
       this.finalText = "";
+      this.responseActive = false;
       this.options.onResponseDone?.();
       this.options.onStatusChange?.("configured");
       return;
@@ -667,6 +783,7 @@ export class QwenRealtimeClient {
     if (eventType === "error" || eventType === "proxy.error") {
       const message = getErrorMessage(event);
       this.isConfigured = false;
+      this.responseActive = false;
       this.options.onStatusChange?.("error");
       this.options.onError?.(message);
     }
