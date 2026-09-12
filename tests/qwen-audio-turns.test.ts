@@ -166,6 +166,40 @@ describe("Qwen audio turns", () => {
     expect(client.commitMusicStream("listen again")).toBe(false);
   });
 
+  it("buffers music while the remote session is still configuring", () => {
+    const holder: { current: FakeWebSocket | null } = { current: null };
+    globalThis.WebSocket = class extends FakeWebSocket {
+      constructor() {
+        super();
+        holder.current = this;
+      }
+    } as unknown as typeof WebSocket;
+
+    const client = new QwenRealtimeClient({ url: "ws://test" });
+    client.connect();
+    const socket = holder.current;
+    if (!socket) throw new Error("Fake WebSocket was not created");
+    socket.open();
+
+    expect(client.appendMusicAudio("AAAA")).toBe(true);
+    expect(client.getPendingMusicDurationSeconds()).toBeCloseTo(
+      3 / 32000,
+    );
+    expect(
+      socket.events().some(
+        (event) => event.type === "input_audio_buffer.append",
+      ),
+    ).toBe(false);
+
+    socket.message({ type: "session.updated" });
+    expect(socket.events().at(-1)).toEqual({
+      type: "input_audio_buffer.append",
+      audio: "AAAA",
+    });
+    expect(client.clearInputAudio()).toBe(true);
+    expect(client.getPendingMusicDurationSeconds()).toBe(0);
+  });
+
   it("drops buffered live music when playback is interrupted", () => {
     const { client, socket } = createReadyClient();
 
@@ -192,17 +226,9 @@ describe("Qwen audio turns", () => {
     });
   });
 
-  it("streams a continuous voice call with semantic VAD", () => {
-    let speechStarted = 0;
-    let speechStopped = 0;
+  it("commits a press-to-talk voice turn manually", () => {
     let transcriptKind: string | null = null;
     const { client, socket } = createReadyClient({
-      onSpeechStarted: () => {
-        speechStarted += 1;
-      },
-      onSpeechStopped: () => {
-        speechStopped += 1;
-      },
       onInputTranscriptDone: (_text, kind) => {
         transcriptKind = kind;
       },
@@ -212,9 +238,7 @@ describe("Qwen audio turns", () => {
     expect(client.isReady()).toBe(false);
 
     const sessionUpdate = socket.events().at(-1);
-    expect(sessionUpdate.session.turn_detection).toEqual({
-      type: "semantic_vad",
-    });
+    expect(sessionUpdate.session.turn_detection).toBeNull();
     expect(sessionUpdate.session.max_tokens).toBe(
       QWEN_MAX_OUTPUT_TOKENS,
     );
@@ -228,12 +252,16 @@ describe("Qwen audio turns", () => {
       type: "input_audio_buffer.append",
       audio: "live-microphone-frame",
     });
-    expect(
-      socket.events().filter((event) => event.type === "response.create"),
-    ).toHaveLength(0);
+    expect(client.commitVoiceTurn()).toBe(true);
+    expect(socket.events().slice(-2)).toEqual([
+      { type: "input_audio_buffer.commit" },
+      {
+        type: "response.create",
+        response: { modalities: ["text", "audio"] },
+      },
+    ]);
+    expect(client.commitVoiceTurn()).toBe(false);
 
-    socket.message({ type: "input_audio_buffer.speech_started" });
-    socket.message({ type: "input_audio_buffer.speech_stopped" });
     socket.message({
       type: "input_audio_buffer.committed",
       item_id: "voice-item",
@@ -244,9 +272,20 @@ describe("Qwen audio turns", () => {
       transcript: "你好",
     });
 
-    expect(speechStarted).toBe(1);
-    expect(speechStopped).toBe(1);
     expect(transcriptKind).toBe("voice");
+  });
+
+  it("does not create a second response while one is active", () => {
+    const { client, socket } = createReadyClient();
+
+    expect(client.sendTextMessage("第一条")).toBe(true);
+    expect(client.sendTextMessage("第二条")).toBe(false);
+    expect(
+      socket.events().filter((event) => event.type === "response.create"),
+    ).toHaveLength(1);
+
+    socket.message({ type: "response.done" });
+    expect(client.sendTextMessage("第二条")).toBe(true);
   });
 
   it("splits audio into frames safely below Qwen's limit", () => {
@@ -287,6 +326,7 @@ describe("Qwen audio turns", () => {
   it("cancels an in-flight response when playback stops", () => {
     const { client, socket } = createReadyClient();
 
+    expect(client.sendTextMessage("正在回复的消息")).toBe(true);
     expect(client.cancelResponse()).toBe(true);
     expect(socket.events().at(-1)).toEqual({
       type: "response.cancel",

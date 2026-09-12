@@ -17,6 +17,7 @@
   "dependencies": {
     "@audio/decode-webm": "^1.2.1",
     "@google/genai": "^2.9.0",
+    "@vercel/analytics": "^2.0.1",
     "@vercel/blob": "^2.4.1",
     "@vercel/functions": "^3.7.5",
     "essentia.js": "^0.1.3",

@@ -59,12 +59,21 @@ function handleConnection(browserSocket: WebSocket) {
     safeSend(browserSocket, text);
 
     try {
-      const event = JSON.parse(text) as { type?: string };
+      const event = JSON.parse(text) as {
+        type?: string;
+        response?: { usage?: unknown };
+      };
 
       if (event.type === "session.created") {
         sendProxyEvent(browserSocket, {
           type: "proxy.connected",
         });
+      }
+
+      if (event.type === "response.done" && event.response?.usage) {
+        console.log(
+          `[Qwen Token Usage] ${JSON.stringify(event.response.usage)}`,
+        );
       }
     } catch {}
   });
