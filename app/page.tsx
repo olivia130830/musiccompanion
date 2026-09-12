@@ -2393,16 +2393,6 @@ export default function Home() {
     }, QWEN_RESPONSE_DEADLINE_MS);
   };
 
-  const handleVoiceCancel = async () => {
-    await stopRealtimeMicrophone();
-    voiceRecordingActiveRef.current = false;
-    voiceResponseActiveRef.current = false;
-    musicPlayerRef.current?.resumeAfterVoiceRecording();
-    qwenVoiceClientRef.current?.clearInputAudio();
-    voiceTurnActiveRef.current = false;
-    voiceInputMusicTimeRef.current = null;
-  };
-
   return (
     <main className="app-shell">
       <div
@@ -2649,7 +2639,6 @@ export default function Home() {
           isTextSending={isSendingText}
           onStartRecording={handleVoiceStart}
           onStopRecording={handleVoiceStop}
-          onCancelRecording={handleVoiceCancel}
           onToggleMicrophone={handleToggleMicrophone}
           onToggleSpeaker={handleToggleSpeaker}
           onHangUp={handleHangUp}

@@ -52,6 +52,21 @@ function handleConnection(browserSocket: WebSocket) {
       Authorization: `Bearer ${apiKey}`,
     },
   });
+  let qwenSessionCreated = false;
+  const pendingBrowserMessages: string[] = [];
+
+  const flushPendingBrowserMessages = () => {
+    if (
+      !qwenSessionCreated ||
+      qwenSocket.readyState !== QwenWebSocket.OPEN
+    ) {
+      return;
+    }
+
+    for (const message of pendingBrowserMessages.splice(0)) {
+      qwenSocket.send(message);
+    }
+  };
 
   qwenSocket.on("message", (data) => {
     const text = data.toString();
@@ -65,9 +80,11 @@ function handleConnection(browserSocket: WebSocket) {
       };
 
       if (event.type === "session.created") {
+        qwenSessionCreated = true;
         sendProxyEvent(browserSocket, {
           type: "proxy.connected",
         });
+        flushPendingBrowserMessages();
       }
 
       if (event.type === "response.done" && event.response?.usage) {
@@ -108,11 +125,17 @@ function handleConnection(browserSocket: WebSocket) {
       return;
     }
 
-    if (qwenSocket.readyState !== QwenWebSocket.OPEN) {
-      sendProxyEvent(browserSocket, {
-        type: "proxy.error",
-        error: "千问 Realtime 还没有连接成功。",
-      });
+    if (
+      !qwenSessionCreated ||
+      qwenSocket.readyState !== QwenWebSocket.OPEN
+    ) {
+      // The browser socket normally opens before DashScope has created its
+      // Realtime session. Buffer this short startup race instead of exposing
+      // a false connection error to the user.
+      if (pendingBrowserMessages.length >= 64) {
+        pendingBrowserMessages.shift();
+      }
+      pendingBrowserMessages.push(text);
       return;
     }
 
