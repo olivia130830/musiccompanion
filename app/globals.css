@@ -887,8 +887,10 @@ input[type="range"]:focus-visible {
 
   font-size: 14px;
   font-weight: 400;
-  touch-action: none;
+  touch-action: manipulation;
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 
   transition:
     transform 160ms ease,

@@ -18,6 +18,17 @@ export type VoiceInputStatus =
 
 export type CommunicationMode = "voice" | "text";
 
+export function getTapRecordingAction(
+  isGestureActive: boolean,
+  status: VoiceInputStatus,
+  isStartPending: boolean,
+) {
+  return isGestureActive &&
+    (status === "recording" || isStartPending)
+    ? "stop"
+    : "start";
+}
+
 interface UserReplyBoxProps {
   disabled: boolean;
   status: VoiceInputStatus;
@@ -33,7 +44,6 @@ interface UserReplyBoxProps {
   isTextSending: boolean;
   onStartRecording: () => Promise<boolean>;
   onStopRecording: () => void | Promise<void>;
-  onCancelRecording: () => void | Promise<void>;
   onToggleMicrophone: () => void;
   onToggleSpeaker: () => void;
   onHangUp: () => void | Promise<void>;
@@ -43,35 +53,16 @@ interface UserReplyBoxProps {
   onSendText: (text: string) => Promise<boolean>;
 }
 
-const CANCEL_GESTURE_DISTANCE = 40;
-
-export function shouldCancelVoiceGesture(
-  startY: number,
-  currentY: number,
-) {
-  return startY - currentY >= CANCEL_GESTURE_DISTANCE;
-}
-
-export function shouldUseTapToRecord(pointerType: string) {
-  return pointerType === "touch";
-}
-
 function getStatusText(
   disabled: boolean,
   status: VoiceInputStatus,
-  isPressing: boolean,
-  isCancelling: boolean,
-  usesTapToRecord: boolean,
 ) {
   if (disabled) return "先选择一首音乐";
   if (status === "requesting_permission") return "正在连接麦克风…";
-  if (isPressing && isCancelling) return "松开取消";
-  if (status === "recording") {
-    return usesTapToRecord ? "再次点击发送" : "松开发送，上移取消";
-  }
+  if (status === "recording") return "再次点击发送";
   if (status === "sending") return "AI 正在思考；点击麦克风可以打断";
   if (status === "speaking") return "AI 正在回应；点击麦克风可以打断";
-  return usesTapToRecord ? "点击麦克风开始说话" : "按住麦克风说话";
+  return "点击麦克风开始说话";
 }
 
 export default function UserReplyBox({
@@ -89,7 +80,6 @@ export default function UserReplyBox({
   isTextSending,
   onStartRecording,
   onStopRecording,
-  onCancelRecording,
   onToggleMicrophone,
   onToggleSpeaker,
   onHangUp,
@@ -100,14 +90,9 @@ export default function UserReplyBox({
 }: UserReplyBoxProps) {
   const [textDraft, setTextDraft] = useState("");
   const [isPressing, setIsPressing] = useState(false);
-  const [isCancelling, setIsCancelling] = useState(false);
-  const [usesTapToRecord, setUsesTapToRecord] = useState(false);
   const gestureActiveRef = useRef(false);
-  const pointerIdRef = useRef<number | null>(null);
-  const startYRef = useRef(0);
   const startPendingRef = useRef(false);
   const recorderStartedRef = useRef(false);
-  const cancelRequestedRef = useRef(false);
   const finishInFlightRef = useRef(false);
   const isRecording = status === "recording";
 
@@ -129,10 +114,7 @@ export default function UserReplyBox({
     }
 
     finishInFlightRef.current = true;
-    const finish = cancelRequestedRef.current
-      ? onCancelRecording
-      : onStopRecording;
-    void Promise.resolve(finish()).finally(() => {
+    void Promise.resolve(onStopRecording()).finally(() => {
       recorderStartedRef.current = false;
       finishInFlightRef.current = false;
     });
@@ -152,33 +134,48 @@ export default function UserReplyBox({
     gestureActiveRef.current = true;
     startPendingRef.current = true;
     recorderStartedRef.current = false;
-    cancelRequestedRef.current = false;
     setIsPressing(true);
-    setIsCancelling(false);
 
     void onStartRecording().then((started) => {
       startPendingRef.current = false;
       recorderStartedRef.current = started;
       if (!started) {
         gestureActiveRef.current = false;
-        pointerIdRef.current = null;
         setIsPressing(false);
-        setIsCancelling(false);
         return;
       }
       if (!gestureActiveRef.current) finishRecording();
     });
   };
 
-  const endRecording = (cancelled: boolean) => {
+  const endRecording = () => {
     if (!gestureActiveRef.current) return;
 
-    cancelRequestedRef.current = cancelled;
     gestureActiveRef.current = false;
-    pointerIdRef.current = null;
     setIsPressing(false);
-    setIsCancelling(false);
     finishRecording();
+  };
+
+  const toggleRecording = () => {
+    const action = getTapRecordingAction(
+      gestureActiveRef.current,
+      status,
+      startPendingRef.current,
+    );
+
+    if (action === "stop") {
+      endRecording();
+      return;
+    }
+
+    if (gestureActiveRef.current) {
+      // The browser may have killed a mobile stream in the background.
+      // Clear that stale UI gesture and reconnect on this same tap.
+      gestureActiveRef.current = false;
+      recorderStartedRef.current = false;
+      setIsPressing(false);
+    }
+    beginRecording();
   };
 
   const handlePointerDown = (
@@ -186,58 +183,7 @@ export default function UserReplyBox({
   ) => {
     if (event.button !== 0) return;
     event.preventDefault();
-
-    if (shouldUseTapToRecord(event.pointerType)) {
-      setUsesTapToRecord(true);
-      if (gestureActiveRef.current) {
-        if (status === "recording" || startPendingRef.current) {
-          endRecording(false);
-        } else {
-          // A mobile browser may kill the stream while the page is in the
-          // background. Discard the stale gesture so the next tap reconnects
-          // immediately instead of requiring an unexplained extra tap.
-          gestureActiveRef.current = false;
-          recorderStartedRef.current = false;
-          cancelRequestedRef.current = false;
-          setIsPressing(false);
-          setIsCancelling(false);
-          beginRecording();
-        }
-      } else {
-        beginRecording();
-      }
-      return;
-    }
-
-    if (gestureActiveRef.current) return;
-    pointerIdRef.current = event.pointerId;
-    startYRef.current = event.clientY;
-    event.currentTarget.setPointerCapture(event.pointerId);
-    beginRecording();
-  };
-
-  const handlePointerMove = (
-    event: PointerEvent<HTMLButtonElement>,
-  ) => {
-    if (pointerIdRef.current !== event.pointerId) return;
-    const cancelled = shouldCancelVoiceGesture(
-      startYRef.current,
-      event.clientY,
-    );
-    cancelRequestedRef.current = cancelled;
-    setIsCancelling(cancelled);
-  };
-
-  const handlePointerEnd = (
-    event: PointerEvent<HTMLButtonElement>,
-    forceCancel = false,
-  ) => {
-    if (pointerIdRef.current !== event.pointerId) return;
-    event.preventDefault();
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    endRecording(forceCancel || cancelRequestedRef.current);
+    toggleRecording();
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
@@ -248,13 +194,7 @@ export default function UserReplyBox({
       return;
     }
     event.preventDefault();
-    beginRecording();
-  };
-
-  const handleKeyUp = (event: KeyboardEvent<HTMLButtonElement>) => {
-    if (event.key !== " " && event.key !== "Enter") return;
-    event.preventDefault();
-    endRecording(false);
+    toggleRecording();
   };
 
   return (
@@ -318,27 +258,17 @@ export default function UserReplyBox({
         <button
           className={`voice-record-button${
             isRecording ? " voice-record-button-active" : ""
-          }${
-            isCancelling ? " voice-record-button-cancelling" : ""
           }`}
           type="button"
           disabled={disabled || isMicrophoneMuted}
           aria-pressed={isPressing}
-          aria-label={
-            usesTapToRecord
-              ? "点击开始说话，再次点击发送"
-              : "按住说话，松开发送，上移取消"
-          }
+          aria-label="点击开始说话，再次点击发送"
           onContextMenu={(event) => event.preventDefault()}
           onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={(event) => handlePointerEnd(event)}
-          onPointerCancel={(event) => handlePointerEnd(event, true)}
           onKeyDown={handleKeyDown}
-          onKeyUp={handleKeyUp}
         >
           <span className="voice-mic-icon" aria-hidden="true">
-            {isCancelling ? "×" : isRecording ? "■" : "●"}
+            {isRecording ? "■" : "●"}
           </span>
         </button>
       </div>
@@ -356,13 +286,7 @@ export default function UserReplyBox({
             : "麦克风已关闭，AI 听不到其他设备外放和你的声音"
           : !isCallConnected && !disabled
             ? "通话已挂断，按主按钮重新连接"
-            : getStatusText(
-                disabled,
-                status,
-                isPressing,
-                isCancelling,
-                usesTapToRecord,
-              )}
+            : getStatusText(disabled, status)}
       </p>
 
       <div hidden={communicationMode === "text"} className="voice-call-controls" aria-label="通话控制">

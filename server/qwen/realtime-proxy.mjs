@@ -59,6 +59,21 @@ wss.on("connection", (browserSocket) => {
   let qwenSocket = null;
   let qwenSessionCreated = false;
   let browserClosed = false;
+  const pendingBrowserMessages = [];
+
+  const flushPendingBrowserMessages = () => {
+    if (
+      !qwenSessionCreated ||
+      !qwenSocket ||
+      qwenSocket.readyState !== WebSocket.OPEN
+    ) {
+      return;
+    }
+
+    for (const message of pendingBrowserMessages.splice(0)) {
+      qwenSocket.send(message);
+    }
+  };
 
   qwenSocket = new WebSocket(QWEN_REALTIME_URL, {
     headers: {
@@ -96,6 +111,7 @@ wss.on("connection", (browserSocket) => {
       );
 
       console.log("[Qwen -> Browser] session.created");
+      flushPendingBrowserMessages();
       return;
     }
 
@@ -164,14 +180,15 @@ wss.on("connection", (browserSocket) => {
       return;
     }
 
-    if (!qwenSocket || qwenSocket.readyState !== WebSocket.OPEN) {
-      safeSend(
-        browserSocket,
-        JSON.stringify({
-          type: "proxy.error",
-          error: "千问 Realtime 还没有连接成功。",
-        }),
-      );
+    if (
+      !qwenSessionCreated ||
+      !qwenSocket ||
+      qwenSocket.readyState !== WebSocket.OPEN
+    ) {
+      if (pendingBrowserMessages.length >= 64) {
+        pendingBrowserMessages.shift();
+      }
+      pendingBrowserMessages.push(text);
       return;
     }
 
