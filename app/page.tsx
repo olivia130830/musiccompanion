@@ -605,6 +605,8 @@ export default function Home() {
 
   const [isSendingVoice, setIsSendingVoice] = useState(false);
 
+  const [isConnectingVoice, setIsConnectingVoice] = useState(false);
+
   const [isSendingText, setIsSendingText] = useState(false);
 
   const [communicationMode, setCommunicationMode] =
@@ -789,8 +791,13 @@ export default function Home() {
     start: startLiveListening,
     stop: stopLiveListening,
   } = useRealtimeListeningSource((audioBase64, rms) => {
-    rememberRecentMusicAudio(audioBase64);
-    qwenClientRef.current?.appendMusicAudio(audioBase64);
+    // The nearby-speaker source can be the same physical microphone as the
+    // push-to-talk recorder. Never feed that signal into the shared Qwen
+    // input twice while the user is speaking.
+    if (!voiceRecordingActiveRef.current) {
+      rememberRecentMusicAudio(audioBase64);
+      qwenClientRef.current?.appendMusicAudio(audioBase64);
+    }
     const now = Date.now();
     if (liveListeningStartedAtRef.current === 0) {
       liveListeningStartedAtRef.current = now;
@@ -983,11 +990,13 @@ export default function Home() {
 
       const musicClient = qwenClientRef.current;
       qwenClientRef.current = null;
-      musicClient?.disconnect();
-      qwenReadyRef.current = false;
       const voiceClient = qwenVoiceClientRef.current;
       qwenVoiceClientRef.current = null;
-      voiceClient?.disconnect();
+      musicClient?.disconnect();
+      if (voiceClient && voiceClient !== musicClient) {
+        voiceClient.disconnect();
+      }
+      qwenReadyRef.current = false;
       voiceCallActiveRef.current = false;
       voiceRecordingActiveRef.current = false;
       voiceResponseActiveRef.current = false;
@@ -1192,12 +1201,27 @@ export default function Home() {
         }
 
         if (status === "closed") {
+          const wasVoiceSession =
+            qwenVoiceClientRef.current === client;
           qwenReadyRef.current = false;
           waitingForQwenResponseRef.current = false;
           activeQwenPromptKindRef.current = null;
           qwenResponseMusicTimeRef.current = null;
           clearQwenResponseWatchdog();
           setIsSendingText(false);
+          if (wasVoiceSession) {
+            qwenVoiceClientRef.current = null;
+            clearVoiceResponseWatchdog();
+            voiceCallActiveRef.current = false;
+            voiceRecordingActiveRef.current = false;
+            voiceResponseActiveRef.current = false;
+            voiceTurnActiveRef.current = false;
+            setIsVoiceCallConnected(false);
+            setIsConnectingVoice(false);
+            setIsSendingVoice(false);
+            void stopRealtimeMicrophone();
+            musicPlayerRef.current?.resumeAfterVoiceRecording();
+          }
           scheduleReconnect(client);
         }
       },
@@ -1284,7 +1308,16 @@ export default function Home() {
       },
 
       onResponseDone: () => {
+        const completedVoiceTurn =
+          qwenVoiceClientRef.current === client &&
+          voiceResponseActiveRef.current;
         clearQwenResponseWatchdog();
+        if (completedVoiceTurn) {
+          clearVoiceResponseWatchdog();
+          voiceResponseActiveRef.current = false;
+          voiceTurnActiveRef.current = false;
+          setIsSendingVoice(false);
+        }
         setIsSendingText(false);
         waitingForQwenResponseRef.current = false;
         activeQwenPromptKindRef.current = null;
@@ -1295,12 +1328,27 @@ export default function Home() {
 
       onError: (message) => {
         if (qwenClientRef.current !== client) return;
+        const wasVoiceSession =
+          qwenVoiceClientRef.current === client;
         clearQwenResponseWatchdog();
         setIsSendingText(false);
         qwenReadyRef.current = false;
         waitingForQwenResponseRef.current = false;
         activeQwenPromptKindRef.current = null;
         qwenResponseMusicTimeRef.current = null;
+        if (wasVoiceSession) {
+          qwenVoiceClientRef.current = null;
+          clearVoiceResponseWatchdog();
+          voiceCallActiveRef.current = false;
+          voiceRecordingActiveRef.current = false;
+          voiceResponseActiveRef.current = false;
+          voiceTurnActiveRef.current = false;
+          setIsVoiceCallConnected(false);
+          setIsConnectingVoice(false);
+          setIsSendingVoice(false);
+          void stopRealtimeMicrophone();
+          musicPlayerRef.current?.resumeAfterVoiceRecording();
+        }
         if (isPermanentRealtimeError(message)) {
           qwenClientRef.current = null;
           setQwenRealtimeStatus("error");
@@ -1331,8 +1379,10 @@ export default function Home() {
     appendReplyAudio,
     beginReplyAudio,
     clearQwenResponseWatchdog,
+    clearVoiceResponseWatchdog,
     finishReplyAudio,
     hasRecentSustainedLiveAudio,
+    stopRealtimeMicrophone,
     updatePendingVoiceHistoryMessage,
   ]);
 
@@ -1730,13 +1780,19 @@ export default function Home() {
     setAudioFileError("");
     setQwenMomentStatus("idle");
     setIsSendingVoice(false);
+    setIsConnectingVoice(false);
     setIsSendingText(false);
     setVoiceInputError("");
     stopReplyAudio();
     void stopRealtimeMicrophone();
     void stopLiveListening();
-    qwenVoiceClientRef.current?.disconnect();
+    const voiceClient = qwenVoiceClientRef.current;
     qwenVoiceClientRef.current = null;
+    if (voiceClient && voiceClient !== qwenClientRef.current) {
+      voiceClient.disconnect();
+    } else {
+      voiceClient?.clearInputAudio();
+    }
     voiceCallActiveRef.current = false;
     voiceRecordingActiveRef.current = false;
     voiceResponseActiveRef.current = false;
@@ -2011,6 +2067,10 @@ export default function Home() {
       clearVoiceResponseWatchdog();
       const previousVoiceClient = qwenVoiceClientRef.current;
       qwenVoiceClientRef.current = null;
+      if (qwenClientRef.current === previousVoiceClient) {
+        qwenClientRef.current = null;
+        qwenReadyRef.current = false;
+      }
       previousVoiceClient?.disconnect();
       voiceCallActiveRef.current = false;
       voiceResponseActiveRef.current = false;
@@ -2051,115 +2111,10 @@ export default function Home() {
       qwenResponseMusicTimeRef.current = null;
     }
     stopReplyAudio();
-
-    let client = qwenVoiceClientRef.current;
-    if (client?.isReady()) {
-      try {
-        attachRecentMusicContext(client);
-        client.commitPendingMusicContext();
-        await startRealtimeMicrophone();
-        return true;
-      } catch {
-        voiceRecordingActiveRef.current = false;
-        voiceTurnActiveRef.current = false;
-        musicPlayerRef.current?.resumeAfterVoiceRecording();
-        return false;
-      }
-    }
-    if (client) {
-      voiceRecordingActiveRef.current = false;
-      voiceTurnActiveRef.current = false;
-      musicPlayerRef.current?.resumeAfterVoiceRecording();
-      return false;
-    }
-
-    client = new QwenRealtimeClient({
-      onStatusChange: (status) => {
-        if (
-          status !== "closed" ||
-          qwenVoiceClientRef.current !== client
-        ) {
-          return;
-        }
-        clearVoiceResponseWatchdog();
-        qwenVoiceClientRef.current = null;
-        voiceCallActiveRef.current = false;
-        voiceRecordingActiveRef.current = false;
-        voiceResponseActiveRef.current = false;
-        voiceTurnActiveRef.current = false;
-        setIsVoiceCallConnected(false);
-        setIsSendingVoice(false);
-        setVoiceInputError("");
-        setCompanionReplyStatus("idle");
-        setCompanionReplyError("");
-        void stopRealtimeMicrophone();
-        musicPlayerRef.current?.resumeAfterVoiceRecording();
-      },
-
-      onInputTranscriptDone: (text, inputKind) => {
-        if (inputKind === "voice") {
-          updatePendingVoiceHistoryMessage(text);
-        }
-      },
-
-      onInputTranscriptFailed: (inputKind) => {
-        if (inputKind === "voice") {
-          updatePendingVoiceHistoryMessage("未能识别这段语音");
-        }
-      },
-
-      onTextDone: (text) => {
-        addCompanionMessage(
-          text,
-          "qwen-voice-call",
-          voiceInputMusicTimeRef.current ??
-            playbackRef.current.currentTime,
-        );
-      },
-
-      onAudioStart: beginReplyAudio,
-      onAudioDelta: appendReplyAudio,
-      onAudioDone: finishReplyAudio,
-
-      onResponseDone: () => {
-        clearVoiceResponseWatchdog();
-        setIsSendingVoice(false);
-        voiceResponseActiveRef.current = false;
-        voiceTurnActiveRef.current = false;
-        setCompanionReplyStatus("idle");
-        setQwenMomentStatus(
-          qwenReadyRef.current ? "connected" : "idle",
-        );
-      },
-
-      onError: (message) => {
-        if (qwenVoiceClientRef.current !== client) return;
-        const isPermanent = isPermanentRealtimeError(message);
-        clearVoiceResponseWatchdog();
-        qwenVoiceClientRef.current = null;
-        voiceCallActiveRef.current = false;
-        voiceRecordingActiveRef.current = false;
-        voiceResponseActiveRef.current = false;
-        setIsVoiceCallConnected(false);
-        voiceTurnActiveRef.current = false;
-        setIsSendingVoice(false);
-        setVoiceInputError(isPermanent ? message : "");
-        setCompanionReplyStatus(isPermanent ? "error" : "idle");
-        setCompanionReplyError(isPermanent ? message : "");
-        void stopRealtimeMicrophone();
-        musicPlayerRef.current?.resumeAfterVoiceRecording();
-      },
-
-    });
-
-    qwenVoiceClientRef.current = client;
-    client.connect();
-
+    setIsConnectingVoice(true);
+    let client: QwenRealtimeClient | null = null;
     try {
-      if (!(await client.waitUntilReady())) {
-        throw new Error("语音通话连接超时，请重试。");
-      }
-
+      client = connectQwenRealtime();
       const instructions = buildQwenPrompt({
         kind: "user_reply",
         audioFile,
@@ -2175,22 +2130,38 @@ export default function Home() {
             revisitedUntilSecondRef.current,
       });
 
-      if (!client.startVoiceCall(instructions)) {
-        throw new Error("无法启动语音通话。");
-      }
-      if (!(await client.waitUntilReady())) {
-        throw new Error("语音通话配置超时，请重试。");
+      let isVoiceSessionReady = false;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const connected =
+          client.isReady() ||
+          (await client.waitUntilReady(15000));
+        if (!connected || !client.startVoiceCall(instructions)) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, 300 * 2 ** attempt),
+          );
+          continue;
+        }
+
+        const configured = await client.waitUntilReady(10000, true);
+        if (configured) {
+          isVoiceSessionReady = true;
+          break;
+        }
       }
 
+      if (!isVoiceSessionReady) {
+        throw new Error("语音服务暂时繁忙");
+      }
+
+      qwenVoiceClientRef.current = client;
       attachRecentMusicContext(client);
       client.commitPendingMusicContext();
       voiceCallActiveRef.current = true;
+      setIsConnectingVoice(false);
       await startRealtimeMicrophone();
       setIsVoiceCallConnected(true);
       return true;
     } catch (unknownError) {
-      const wasCurrentVoiceClient =
-        qwenVoiceClientRef.current === client;
       if (qwenVoiceClientRef.current === client) {
         qwenVoiceClientRef.current = null;
       }
@@ -2198,36 +2169,32 @@ export default function Home() {
       voiceRecordingActiveRef.current = false;
       voiceResponseActiveRef.current = false;
       voiceTurnActiveRef.current = false;
+      setIsConnectingVoice(false);
       setIsVoiceCallConnected(false);
-      client.disconnect();
+      client?.clearInputAudio();
       musicPlayerRef.current?.resumeAfterVoiceRecording();
       const message =
         unknownError instanceof Error
           ? unknownError.message
           : "无法开始语音通话。";
-      if (wasCurrentVoiceClient) {
+      if (isPermanentRealtimeError(message)) {
         setVoiceInputError(message);
       }
       return false;
     }
   }, [
-    addCompanionMessage,
-    appendReplyAudio,
     attachRecentMusicContext,
     audioFile,
-    beginReplyAudio,
     cancelScheduledProactiveComment,
     clearQwenResponseWatchdog,
     clearVoiceResponseWatchdog,
-    finishReplyAudio,
+    connectQwenRealtime,
     hasActiveListeningInput,
     listeningInputMode,
     localAudioFeatures,
     prepareReplyAudio,
     startRealtimeMicrophone,
-    stopRealtimeMicrophone,
     stopReplyAudio,
-    updatePendingVoiceHistoryMessage,
   ]);
 
   const handleListeningInputChange = async (
@@ -2374,14 +2341,20 @@ export default function Home() {
 
   const handleHangUp = async () => {
     clearVoiceResponseWatchdog();
-    qwenVoiceClientRef.current?.disconnect();
+    const voiceClient = qwenVoiceClientRef.current;
     qwenVoiceClientRef.current = null;
+    if (voiceClient && voiceClient !== qwenClientRef.current) {
+      voiceClient.disconnect();
+    } else {
+      voiceClient?.clearInputAudio();
+    }
     voiceCallActiveRef.current = false;
     voiceRecordingActiveRef.current = false;
     voiceResponseActiveRef.current = false;
     voiceTurnActiveRef.current = false;
     setIsVoiceCallConnected(false);
     setIsSendingVoice(false);
+    setIsConnectingVoice(false);
     setCompanionReplyStatus("idle");
     await stopRealtimeMicrophone();
     musicPlayerRef.current?.resumeAfterVoiceRecording();
@@ -2398,14 +2371,20 @@ export default function Home() {
     stopReplyAudio();
 
     if (nextMode === "text") {
-      qwenVoiceClientRef.current?.disconnect();
+      const voiceClient = qwenVoiceClientRef.current;
       qwenVoiceClientRef.current = null;
+      if (voiceClient && voiceClient !== qwenClientRef.current) {
+        voiceClient.disconnect();
+      } else {
+        voiceClient?.clearInputAudio();
+      }
       voiceCallActiveRef.current = false;
       voiceRecordingActiveRef.current = false;
       voiceResponseActiveRef.current = false;
       voiceTurnActiveRef.current = false;
       setIsVoiceCallConnected(false);
       setIsSendingVoice(false);
+      setIsConnectingVoice(false);
       clearVoiceResponseWatchdog();
       void stopRealtimeMicrophone();
       musicPlayerRef.current?.resumeAfterVoiceRecording();
@@ -2528,6 +2507,10 @@ export default function Home() {
       addPendingVoiceHistoryMessage();
     }
 
+    waitingForQwenResponseRef.current = true;
+    activeQwenPromptKindRef.current = "user_reply";
+    qwenResponseMusicTimeRef.current =
+      voiceInputMusicTimeRef.current;
     setIsSendingVoice(true);
     voiceResponseActiveRef.current = true;
     setCompanionReplyStatus("thinking");
@@ -2538,6 +2521,13 @@ export default function Home() {
       if (qwenVoiceClientRef.current === client) {
         qwenVoiceClientRef.current = null;
       }
+      if (qwenClientRef.current === client) {
+        qwenClientRef.current = null;
+        qwenReadyRef.current = false;
+      }
+      waitingForQwenResponseRef.current = false;
+      activeQwenPromptKindRef.current = null;
+      qwenResponseMusicTimeRef.current = null;
       client.disconnect();
       voiceCallActiveRef.current = false;
       voiceRecordingActiveRef.current = false;
@@ -2785,6 +2775,8 @@ export default function Home() {
           status={
             isPlayingReply
               ? "speaking"
+              : isConnectingVoice
+                ? "requesting_permission"
               : isSendingVoice
                 ? "sending"
                 : voiceRecorderStatus

@@ -475,9 +475,13 @@ export class QwenRealtimeClient {
     return true;
   }
 
-  public async waitUntilReady(timeoutMs = 10000) {
+  public async waitUntilReady(
+    timeoutMs = 10000,
+    failWhenDisconnected = false,
+  ) {
     const startedAt = Date.now();
     while (!this.isReady()) {
+      if (failWhenDisconnected && this.socket === null) return false;
       if (Date.now() - startedAt >= timeoutMs) return false;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
@@ -656,6 +660,10 @@ export class QwenRealtimeClient {
       silence_duration_ms: number;
     } = null,
   ) {
+    // A single socket is shared by music analysis and push-to-talk. Keep the
+    // local routing mode in lockstep with the server session configuration so
+    // a later music turn cannot be mistaken for another microphone turn.
+    this.liveVoiceMode = enableInputTranscription;
     this.sendEvent({
       type: "session.update",
       session: {
