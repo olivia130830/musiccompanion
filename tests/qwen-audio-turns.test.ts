@@ -346,6 +346,44 @@ describe("Qwen audio turns", () => {
     ).toHaveLength(2);
   });
 
+  it("cancels an active response before reconfiguring the next voice turn", async () => {
+    const { client, socket } = createReadyClient();
+
+    expect(client.startVoiceCall("first turn")).toBe(true);
+    socket.message({ type: "session.updated" });
+    expect(client.appendVoiceAudio("first-question")).toBe(true);
+    expect(client.commitVoiceTurn()).toBe(true);
+    expect(client.startVoiceCall("must wait")).toBe(false);
+
+    expect(client.cancelResponse()).toBe(true);
+    const idle = client.waitUntilIdle(1000);
+    socket.message({ type: "response.done" });
+    await expect(idle).resolves.toBe(true);
+
+    expect(client.startVoiceCall("second turn")).toBe(true);
+  });
+
+  it("does not mistake an older session update for the voice configuration", async () => {
+    const { client, socket } = createReadyClient();
+
+    expect(client.sendTextMessage("first", "text turn", false)).toBe(true);
+    socket.message({ type: "response.done" });
+    expect(client.startVoiceCall("voice turn")).toBe(true);
+    const voiceSequence = client.getLastSessionUpdateSequence();
+
+    // This acknowledges the text turn's earlier session.update, not the
+    // voice turn which was sent after it.
+    socket.message({ type: "session.updated" });
+    await expect(
+      client.waitForSessionUpdate(voiceSequence, 20),
+    ).resolves.toBe(false);
+
+    socket.message({ type: "session.updated" });
+    await expect(
+      client.waitForSessionUpdate(voiceSequence, 20),
+    ).resolves.toBe(true);
+  });
+
   it("does not create a second response while one is active", () => {
     const { client, socket } = createReadyClient();
 
