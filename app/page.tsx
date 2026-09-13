@@ -21,6 +21,7 @@ import {
 } from "@/lib/audio/formats";
 import {
   float32ToPcm16Base64,
+  QWEN_INPUT_SAMPLE_RATE,
   resampleMonoFloat32,
 } from "@/lib/audio/pcm16";
 
@@ -83,9 +84,12 @@ const QWEN_POST_SPEECH_COOLDOWN_MS = 3000;
 const QWEN_RESPONSE_DEADLINE_MS = 25000;
 const PROACTIVE_COMMENT_INTERVAL_SECONDS = 12;
 const MIN_PROACTIVE_AUDIO_SECONDS = 6;
-const RECENT_MUSIC_CONTEXT_SECONDS = 20;
+const RECENT_MUSIC_CONTEXT_SECONDS = 24;
 const MAX_RECENT_MUSIC_BASE64_CHARS = Math.ceil(
-  16000 * 2 * RECENT_MUSIC_CONTEXT_SECONDS * (4 / 3),
+  QWEN_INPUT_SAMPLE_RATE *
+    2 *
+    RECENT_MUSIC_CONTEXT_SECONDS *
+    (4 / 3),
 );
 const MIN_PROACTIVE_COMMENT_SECOND = 4;
 const FIRST_COMMENT_REQUEST_DEADLINE_SECOND = 16;
@@ -746,8 +750,14 @@ export default function Home() {
   }, []);
 
   const attachRecentMusicContext = useCallback(
-    (client: QwenRealtimeClient, minimumSeconds = 0.25) => {
-      if (
+    (
+      client: QwenRealtimeClient,
+      minimumSeconds = 0.25,
+      replacePendingAudio = false,
+    ) => {
+      if (replacePendingAudio) {
+        client.clearInputAudio();
+      } else if (
         client.getPendingMusicDurationSeconds() >= minimumSeconds
       ) {
         return true;
@@ -1478,7 +1488,10 @@ export default function Home() {
                   1000,
               );
 
-        attachRecentMusicContext(client);
+        // Use an overlapping window instead of only the tail left after the
+        // previous commit. Otherwise a lyric line crossing the interval
+        // boundary is sent as two incomplete halves.
+        attachRecentMusicContext(client, 0.25, true);
         const receivedAudioSeconds =
           client.getPendingMusicDurationSeconds();
         if (
@@ -1723,9 +1736,7 @@ export default function Home() {
     }
 
     const client = qwenClientRef.current;
-    qwenClientRef.current = null;
-    qwenReadyRef.current = false;
-    client?.disconnect();
+    client?.cancelResponse();
     clearQwenResponseWatchdog();
     waitingForQwenResponseRef.current = false;
     activeQwenPromptKindRef.current = null;
@@ -1735,7 +1746,6 @@ export default function Home() {
     setQwenMomentStatus(
       qwenReadyRef.current ? "connected" : "idle",
     );
-    setQwenRealtimeStatus("closed");
   }, [clearQwenResponseWatchdog, stopReplyAudio]);
 
   useEffect(() => {
@@ -2067,17 +2077,23 @@ export default function Home() {
       clearVoiceResponseWatchdog();
       const previousVoiceClient = qwenVoiceClientRef.current;
       qwenVoiceClientRef.current = null;
-      if (qwenClientRef.current === previousVoiceClient) {
-        qwenClientRef.current = null;
-        qwenReadyRef.current = false;
+      previousVoiceClient?.cancelResponse();
+      stopReplyAudio();
+      if (
+        previousVoiceClient &&
+        !(await previousVoiceClient.waitUntilIdle(3000))
+      ) {
+        if (qwenClientRef.current === previousVoiceClient) {
+          qwenClientRef.current = null;
+          qwenReadyRef.current = false;
+        }
+        previousVoiceClient.disconnect();
       }
-      previousVoiceClient?.disconnect();
       voiceCallActiveRef.current = false;
       voiceResponseActiveRef.current = false;
       voiceTurnActiveRef.current = false;
       setIsVoiceCallConnected(false);
       setIsSendingVoice(false);
-      stopReplyAudio();
     }
 
     setVoiceInputError("");
@@ -2102,13 +2118,18 @@ export default function Home() {
 
     if (waitingForQwenResponseRef.current) {
       const musicClient = qwenClientRef.current;
-      qwenClientRef.current = null;
-      qwenReadyRef.current = false;
-      musicClient?.disconnect();
+      musicClient?.cancelResponse();
       clearQwenResponseWatchdog();
       waitingForQwenResponseRef.current = false;
       activeQwenPromptKindRef.current = null;
       qwenResponseMusicTimeRef.current = null;
+      if (musicClient && !(await musicClient.waitUntilIdle(3000))) {
+        if (qwenClientRef.current === musicClient) {
+          qwenClientRef.current = null;
+          qwenReadyRef.current = false;
+        }
+        musicClient.disconnect();
+      }
     }
     stopReplyAudio();
     setIsConnectingVoice(true);
@@ -2142,7 +2163,12 @@ export default function Home() {
           continue;
         }
 
-        const configured = await client.waitUntilReady(10000, true);
+        const voiceConfigurationSequence =
+          client.getLastSessionUpdateSequence();
+        const configured = await client.waitForSessionUpdate(
+          voiceConfigurationSequence,
+          10000,
+        );
         if (configured) {
           isVoiceSessionReady = true;
           break;
@@ -2154,7 +2180,7 @@ export default function Home() {
       }
 
       qwenVoiceClientRef.current = client;
-      attachRecentMusicContext(client);
+      attachRecentMusicContext(client, 0.25, true);
       client.commitPendingMusicContext();
       voiceCallActiveRef.current = true;
       setIsConnectingVoice(false);
@@ -2429,8 +2455,15 @@ export default function Home() {
       if (!(client.isReady() || (await client.waitUntilReady()))) {
         throw new Error("Realtime 连接超时，请重试。");
       }
+      if (!(await client.waitUntilIdle(3000))) {
+        throw new Error("上一条回复还没有结束，请再点一次发送。");
+      }
 
-      attachRecentMusicContext(client, MIN_PROACTIVE_AUDIO_SECONDS);
+      attachRecentMusicContext(
+        client,
+        MIN_PROACTIVE_AUDIO_SECONDS,
+        true,
+      );
       const pendingMusicSeconds =
         client.getPendingMusicDurationSeconds();
       const shouldAttachCurrentMusic = pendingMusicSeconds >= 0.25;

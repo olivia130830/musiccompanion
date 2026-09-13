@@ -6,7 +6,10 @@ export type ConvertAudioFileOptions = {
   targetSampleRate?: number;
 };
 
-export const QWEN_INPUT_SAMPLE_RATE = 16000;
+// Qwen3.5 Omni Realtime supports 24 kHz PCM input. Keeping the extra vocal
+// bandwidth materially helps consonants and lyric recognition compared with
+// the legacy 16 kHz default.
+export const QWEN_INPUT_SAMPLE_RATE = 24000;
 
 function arrayBufferToBase64(buffer: ArrayBuffer) {
   const bytes = new Uint8Array(buffer);
