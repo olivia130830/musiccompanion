@@ -328,6 +328,24 @@ describe("Qwen audio turns", () => {
     expect(transcriptKind).toBe("voice");
   });
 
+  it("reuses the same configured socket for a second voice turn", () => {
+    const { client, socket } = createReadyClient();
+
+    for (const frame of ["first-question", "second-question"]) {
+      expect(client.startVoiceCall("answer the current turn")).toBe(true);
+      socket.message({ type: "session.updated" });
+      expect(client.appendVoiceAudio(frame)).toBe(true);
+      expect(client.commitVoiceTurn()).toBe(true);
+      socket.message({ type: "response.done" });
+    }
+
+    expect(
+      socket
+        .events()
+        .filter((event) => event.type === "response.create"),
+    ).toHaveLength(2);
+  });
+
   it("does not create a second response while one is active", () => {
     const { client, socket } = createReadyClient();
 
@@ -384,6 +402,16 @@ describe("Qwen audio turns", () => {
     expect(socket.events().at(-1)).toEqual({
       type: "response.cancel",
     });
+  });
+
+  it("stops a setup wait immediately when its socket is discarded", async () => {
+    const { client } = createReadyClient();
+    client.startVoiceCall("configure voice mode");
+
+    const ready = client.waitUntilReady(10000, true);
+    client.disconnect();
+
+    await expect(ready).resolves.toBe(false);
   });
 
   it("keeps microphone transcription when committed item metadata is missing", () => {
