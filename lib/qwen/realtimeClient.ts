@@ -1,3 +1,5 @@
+import { QWEN_INPUT_SAMPLE_RATE } from "@/lib/audio/pcm16";
+
 export type QwenRealtimeStatus =
   | "idle"
   | "connecting"
@@ -42,7 +44,7 @@ export const QWEN_AUDIO_CHUNK_BASE64_LENGTH = 64 * 1024;
 // thousands of output tokens without shortening the intended reply.
 export const QWEN_MAX_OUTPUT_TOKENS = 512;
 
-const QWEN_PCM_BYTES_PER_SECOND = 16000 * 2;
+const QWEN_PCM_BYTES_PER_SECOND = QWEN_INPUT_SAMPLE_RATE * 2;
 const QWEN_PRECONNECT_MUSIC_BUFFER_SECONDS = 20;
 const PROXY_HEARTBEAT_INTERVAL_MS = 15000;
 const SESSION_SETUP_TIMEOUT_MS = 12000;
@@ -216,6 +218,10 @@ export class QwenRealtimeClient {
 
   private responseActive = false;
 
+  private sentSessionUpdates = 0;
+
+  private acknowledgedSessionUpdates = 0;
+
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
   private sessionSetupTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -240,6 +246,8 @@ export class QwenRealtimeClient {
       return;
     }
 
+    this.sentSessionUpdates = 0;
+    this.acknowledgedSessionUpdates = 0;
     this.options.onStatusChange?.("connecting");
 
     const socket = new WebSocket(
@@ -336,7 +344,7 @@ export class QwenRealtimeClient {
   }
 
   public startVoiceCall(instructions: string) {
-    if (!this.isReady()) return false;
+    if (!this.isReady() || this.responseActive) return false;
 
     this.liveVoiceMode = true;
     this.isConfigured = false;
@@ -486,6 +494,33 @@ export class QwenRealtimeClient {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     return true;
+  }
+
+  public async waitUntilIdle(timeoutMs = 3000) {
+    const startedAt = Date.now();
+    while (this.responseActive) {
+      if (!this.socket) return false;
+      if (Date.now() - startedAt >= timeoutMs) return false;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    return this.isReady();
+  }
+
+  public getLastSessionUpdateSequence() {
+    return this.sentSessionUpdates;
+  }
+
+  public async waitForSessionUpdate(
+    sequence: number,
+    timeoutMs = 10000,
+  ) {
+    const startedAt = Date.now();
+    while (this.acknowledgedSessionUpdates < sequence) {
+      if (!this.socket) return false;
+      if (Date.now() - startedAt >= timeoutMs) return false;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    return this.isReady();
   }
 
   public sendVoiceMessage(audioBase64: string, instructions: string) {
@@ -664,6 +699,7 @@ export class QwenRealtimeClient {
     // local routing mode in lockstep with the server session configuration so
     // a later music turn cannot be mistaken for another microphone turn.
     this.liveVoiceMode = enableInputTranscription;
+    this.sentSessionUpdates += 1;
     this.sendEvent({
       type: "session.update",
       session: {
@@ -671,6 +707,20 @@ export class QwenRealtimeClient {
         voice: "Tina",
         input_audio_format: "pcm",
         output_audio_format: "pcm",
+        audio: {
+          input: {
+            format: {
+              type: "pcm",
+              sample_rate: QWEN_INPUT_SAMPLE_RATE,
+            },
+          },
+          output: {
+            format: {
+              type: "pcm",
+              sample_rate: 24000,
+            },
+          },
+        },
         max_tokens: QWEN_MAX_OUTPUT_TOKENS,
         // 歌曲由 Omni 直接理解，不做文字转写；只有麦克风语音开启
         // ASR，用于在历史区显示用户实际说的话。
@@ -745,6 +795,10 @@ export class QwenRealtimeClient {
 
     if (eventType === "session.updated") {
       this.stopSessionSetupWatchdog();
+      this.acknowledgedSessionUpdates = Math.min(
+        this.sentSessionUpdates,
+        this.acknowledgedSessionUpdates + 1,
+      );
       this.isConfigured = true;
       this.flushQueuedMusicAudio();
       this.options.onStatusChange?.("configured");
