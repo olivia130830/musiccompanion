@@ -705,8 +705,6 @@ export class QwenRealtimeClient {
       session: {
         modalities: ["text", "audio"],
         voice: "Tina",
-        input_audio_format: "pcm",
-        output_audio_format: "pcm",
         audio: {
           input: {
             format: {

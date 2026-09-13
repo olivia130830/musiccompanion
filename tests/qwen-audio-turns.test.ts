@@ -291,6 +291,12 @@ describe("Qwen audio turns", () => {
     expect(client.isReady()).toBe(false);
 
     const sessionUpdate = socket.events().at(-1);
+    expect(sessionUpdate.session.input_audio_format).toBeUndefined();
+    expect(sessionUpdate.session.output_audio_format).toBeUndefined();
+    expect(sessionUpdate.session.audio).toEqual({
+      input: { format: { type: "pcm", sample_rate: 24000 } },
+      output: { format: { type: "pcm", sample_rate: 24000 } },
+    });
     expect(sessionUpdate.session.turn_detection).toBeNull();
     expect(sessionUpdate.session.max_tokens).toBe(
       QWEN_MAX_OUTPUT_TOKENS,
