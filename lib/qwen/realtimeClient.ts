@@ -13,6 +13,8 @@ export type QwenAudioInputKind = "music" | "voice";
 
 export type QwenRealtimeClientOptions = {
   url?: string;
+  voice?: string;
+  instructions?: string;
   onStatusChange?: (status: QwenRealtimeStatus) => void;
   onTextDelta?: (delta: string) => void;
   onTextDone?: (text: string) => void;
@@ -228,6 +230,8 @@ export class QwenRealtimeClient {
 
   private liveVoiceMode = false;
 
+  private outputVoice: string;
+
   private pendingInputKinds: QwenAudioInputKind[] = [];
 
   private readonly inputKindByItemId =
@@ -235,6 +239,7 @@ export class QwenRealtimeClient {
 
   public constructor(options: QwenRealtimeClientOptions = {}) {
     this.options = options;
+    this.outputVoice = options.voice || "Tina";
   }
 
   public connect() {
@@ -343,9 +348,10 @@ export class QwenRealtimeClient {
     );
   }
 
-  public startVoiceCall(instructions: string) {
+  public startVoiceCall(instructions: string, voice?: string) {
     if (!this.isReady() || this.responseActive) return false;
 
+    if (voice) this.outputVoice = voice;
     this.liveVoiceMode = true;
     this.isConfigured = false;
     // Voice turns are controlled by the press-to-talk button. Manual commit
@@ -398,6 +404,7 @@ export class QwenRealtimeClient {
   public commitMusicStream(
     instructions: string,
     responseWithAudio = true,
+    voice?: string,
   ) {
     if (
       !this.isReady() ||
@@ -407,6 +414,7 @@ export class QwenRealtimeClient {
       return false;
     }
 
+    if (voice) this.outputVoice = voice;
     this.sendSessionUpdate(instructions, false);
     this.pendingInputKinds.push("music");
     this.sendEvent({ type: "input_audio_buffer.commit" });
@@ -442,6 +450,7 @@ export class QwenRealtimeClient {
     instructions = DEFAULT_INSTRUCTIONS,
     responseWithAudio = true,
     includePendingMusic = false,
+    voice?: string,
   ) {
     const cleanText = text.trim();
 
@@ -449,6 +458,7 @@ export class QwenRealtimeClient {
       return false;
     }
 
+    if (voice) this.outputVoice = voice;
     this.sendSessionUpdate(instructions, false);
     if (includePendingMusic && this.hasPendingStreamAudio) {
       this.commitPendingMusicInput();
@@ -687,7 +697,7 @@ export class QwenRealtimeClient {
   }
 
   private sendSessionUpdate(
-    instructions = DEFAULT_INSTRUCTIONS,
+    instructions = this.options.instructions || DEFAULT_INSTRUCTIONS,
     enableInputTranscription = false,
     turnDetection: null | {
       type: "server_vad";
@@ -704,7 +714,7 @@ export class QwenRealtimeClient {
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
-        voice: "Tina",
+        voice: this.outputVoice,
         audio: {
           input: {
             format: {

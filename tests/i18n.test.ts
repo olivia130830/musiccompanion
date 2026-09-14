@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   getAiReplyLanguageInstruction,
+  getQwenVoice,
   localizeRuntimeMessage,
   tr,
 } from "@/lib/i18n";
@@ -17,6 +18,11 @@ describe("language selection", () => {
     expect(getAiReplyLanguageInstruction("en")).toContain(
       "entirely in natural English",
     );
+  });
+
+  it("uses a dedicated English voice", () => {
+    expect(getQwenVoice("zh")).toBe("Tina");
+    expect(getQwenVoice("en")).toBe("Jennifer");
   });
 
   it("localizes known runtime messages without hiding unknown details", () => {

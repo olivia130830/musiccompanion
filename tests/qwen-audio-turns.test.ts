@@ -130,6 +130,28 @@ describe("Qwen audio turns", () => {
     });
   });
 
+  it("applies the selected English voice to the response session", () => {
+    const { client, socket } = createReadyClient({ voice: "Tina" });
+
+    expect(
+      client.sendTextMessage(
+        "What can you hear?",
+        "Reply entirely in English",
+        true,
+        false,
+        "Jennifer",
+      ),
+    ).toBe(true);
+
+    const sessionUpdate = socket
+      .events()
+      .findLast((event) => event.type === "session.update");
+    expect(sessionUpdate.session.voice).toBe("Jennifer");
+    expect(sessionUpdate.session.instructions).toContain(
+      "entirely in English",
+    );
+  });
+
   it("commits current music together with a typed lyric question", () => {
     const { client, socket } = createReadyClient();
 

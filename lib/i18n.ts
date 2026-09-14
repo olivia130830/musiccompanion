@@ -16,6 +16,10 @@ export function getAiReplyLanguageInstruction(
     : "输出语言：始终使用自然中文回复。引用歌词时可以保留歌词原文，但解释必须使用中文；除非用户明确要求，否则不要切换成英文。";
 }
 
+export function getQwenVoice(language: AppLanguage) {
+  return language === "en" ? "Jennifer" : "Tina";
+}
+
 const ENGLISH_RUNTIME_MESSAGES: Array<[
   RegExp,
   string | ((match: RegExpMatchArray) => string),

@@ -48,6 +48,7 @@ import type {
 } from "@/types/music";
 import {
   getAiReplyLanguageInstruction,
+  getQwenVoice,
   localizeRuntimeMessage,
   tr,
   type AppLanguage,
@@ -477,6 +478,60 @@ function getUserRequestFocusGuide(userText?: string) {
   return "先完成用户这句话里的明确要求，再考虑是否需要补充听感；禁止用泛泛的感叹或无关音乐短评代替答案。";
 }
 
+function getEnglishUserRequestFocusGuide(userText?: string) {
+  const text = userText?.trim() ?? "";
+  const asksForLyrics =
+    /lyrics?|what (?:did|is|are).{0,20}(?:sing|sang|saying)|what.{0,12}(?:line|word)|歌词|唱.{0,4}什么/iu.test(
+      text,
+    );
+
+  if (asksForLyrics) {
+    return "The user is asking about lyrics. Inspect the complete recent audio window and its surrounding context. Lead with the longest continuous lyric fragment you can confirm, respecting Korean, English, and mixed-language singing. Never replace the answer with a vague reaction; mark only genuinely uncertain words.";
+  }
+
+  const asksForIdentityOrGenre =
+    /song (?:name|title)|what song|which song|who (?:sings|sang)|artist|singer|genre|style|k[ -]?pop|歌名|歌手|曲风/iu.test(
+      text,
+    );
+
+  if (asksForIdentityOrGenre) {
+    return "The user is asking about or correcting the song title, artist, or genre. Answer that point first. Use the actual vocals, language, repeated hook, lyric clues, rhythm, and production to give the most likely conclusion, clearly separating confidence from candidates. Do not substitute an unrelated listening reaction.";
+  }
+
+  return "Complete the user's explicit request first. Add a listening observation only if it helps; never replace the answer with a generic exclamation or unrelated music comment.";
+}
+
+function getEnglishHumanReplyGuide(kind: QwenPromptKind) {
+  const baseGuide = [
+    "Style: sound like a real person listening alongside the user, not a critic, essayist, or customer-service agent.",
+    "Every observation must be supported by this turn's actual audio and identify a concrete sound, change, vocal detail, lyric, rhythm, or production clue.",
+    "The attached song audio is primary evidence. Listen through the entire window before answering, especially for vocals entering near the end.",
+    "Hearing a vocal and understanding every word are different. If some words are masked, acknowledge the singing and provide the words or vocal qualities you can actually confirm.",
+    "For proactive comments, do not announce that lyrics are unclear. If exact words are uncertain, comment on a clearly audible vocal, rhythmic, or instrumental detail instead.",
+    "Use the newest audio as ground truth. Do not repeat an earlier claim that there are no vocals if singing appears in this turn.",
+    "Do not turn loudness into claims such as harsh, exciting, good, or bad without specific supporting audio evidence.",
+    "Never report Hz, spectral shares, RMS, volume measurements, or detection diagnostics to the user.",
+    "Do not invent lyrics, instruments, regional traits, artists, or song titles. State uncertainty naturally when evidence is incomplete.",
+  ];
+
+  if (kind === "user_reply") {
+    return [
+      ...baseGuide,
+      "The user's current message has the highest priority. Answer it directly instead of continuing a previous automatic comment.",
+      "If microphone audio contains only breathing, a bump, background noise, a cough, or an unintelligible fragment, simply say you did not catch the user's words. Never infer illness, distress, or a topic change.",
+      "If the user corrects the genre, artist, or style, acknowledge the correction and reassess using the rhythm, production, vocal language, and hooks already heard.",
+      "For lyric questions, make the confirmed lyric content the main answer. Preserve the lyric's original language and explain it in English when useful.",
+      "For song, artist, or genre identification, use several real clues and distinguish a confident answer from a possible candidate.",
+      "When asked why, connect a specific audio clue to its perceptual effect and then to the earlier conclusion.",
+    ].join("\n");
+  }
+
+  return [
+    ...baseGuide,
+    "For proactive comments, speak only when this moment gives you something concrete to say. Make it feel spontaneous rather than scheduled.",
+  ].join("\n");
+}
+
 function buildQwenPrompt({
   language,
   kind,
@@ -542,6 +597,85 @@ function buildQwenPrompt({
     ? "用户把进度拉回了之前听过的一段；可以意识到这是回听/重复听，但不要机械地说“你又回来了”，要像朋友自然发现这段还是值得再听。"
     : "这是当前正常播放到的新位置。";
 
+  if (language === "en") {
+    const englishHistory =
+      recentMessages.length > 0
+        ? recentMessages
+            .map((message) => {
+              const speaker =
+                message.sender === "user" ? "User" : "You";
+              return `${speaker}@${formatPlaybackTime(message.musicTimeSeconds)}: ${message.text}`;
+            })
+            .join("\n")
+        : "None yet.";
+    const englishTask =
+      kind === "user_reply"
+        ? textOnlyReply
+          ? `The user just typed: ${userText ?? ""}\nThis is a direct answer to the user's message, not a new proactive comment. Answer the message itself first and use recent context only when relevant.`
+          : "The newly attached microphone audio contains the user's actual speech. Understand and answer the user directly; do not mistake the song or system instructions for the user's words."
+        : "The song has reached a new moment. Offer one specific, evidence-based listening comment.";
+    const englishSource =
+      listeningSource === "local_speaker"
+        ? "system or browser-tab audio playing on this computer"
+        : listeningSource === "nearby_speaker"
+          ? "music playing from another device and captured by the microphone"
+          : "a music file playing on this page";
+
+    return [
+      getAiReplyLanguageInstruction(language),
+      "You are MusicCompanion, listening to music together with the user.",
+      kind === "proactive_comment"
+        ? "This turn includes the song audio that just played. Listen to it yourself before commenting, and pay particular attention to vocals, lyrics, rhythm, instrumentation, and changes that actually occurred."
+        : textOnlyReply
+          ? "The user is communicating through text. The turn may also include previously unanalysed song audio up to the current moment; fulfil the user's exact request directly."
+          : "The new audio in this turn contains only the user's microphone speech. Answer that speech; do not treat historical song vocals as the user's current words.",
+      replyRequirement,
+      ...(kind === "user_reply"
+        ? [getEnglishUserRequestFocusGuide(userText)]
+        : []),
+      "Be specific: identify the sound, lyric, vocal detail, position, or musical change that supports the response.",
+      "There are no reusable example lines. Compose a fresh response from this turn's real audio and the user's message; avoid stock phrases and do not repeat prior comments.",
+      "Before responding, compare recent messages and avoid reusing the same sound object, judgment, adjective, metaphor, or angle.",
+      "Mention reversed, sped-up, or otherwise processed audio only when the audio provides clear evidence.",
+      getEnglishHumanReplyGuide(kind),
+      `Listening source: ${englishSource}`,
+      ...(audioFile ? [`Song filename: ${audioFile.name}`] : []),
+      ...(fileListeningHint
+        ? [
+            "Filename clue: the audio may be reversed. Treat this only as a clue and verify it against what is actually heard.",
+          ]
+        : []),
+      ...(audioFile
+        ? [
+            `File format: ${inferAudioMimeType(audioFile) || getFileExtension(audioFile.name) || "unknown"}`,
+            `File size: ${formatFileSize(audioFile.size)}`,
+          ]
+        : []),
+      `Playback position: ${currentTime} / ${playback.duration ? formatPlaybackTime(playback.duration) : "unknown"}`,
+      `Playback state: ${playback.isPlaying ? "playing" : "paused"}`,
+      `Audio evidence status: ${
+        hasReceivedPlaybackAudio
+          ? "actual playback audio has been received"
+          : "no playback audio has been received; do not pretend to have heard the song"
+      }`,
+      `Playback context: ${
+        isRevisitedSegment
+          ? "the user returned to an earlier passage; acknowledge this naturally only if relevant"
+          : "this is a new point in normal playback"
+      }`,
+      `Local analysis: ${
+        localAudioFeatures
+          ? `duration ${localAudioFeatures.durationSeconds ? formatPlaybackTime(localAudioFeatures.durationSeconds) : "unknown"}, sample rate ${localAudioFeatures.sampleRate || "unknown"} Hz; use only as a guard, never as a substitute for listening`
+          : "not available"
+      }`,
+      "Recent messages:",
+      englishHistory,
+      "Current task:",
+      englishTask,
+      getAiReplyLanguageInstruction(language),
+    ].join("\n");
+  }
+
   return [
     getAiReplyLanguageInstruction(language),
     "你正在和用户一起听歌。",
@@ -601,6 +735,9 @@ function buildQwenPrompt({
 export default function Home() {
   const [appLanguage, setAppLanguage] =
     useState<AppLanguage>("zh");
+
+  const [isLanguageReady, setIsLanguageReady] =
+    useState(false);
 
   const [audioFile, setAudioFile] = useState<File | null>(
     null,
@@ -665,6 +802,7 @@ export default function Home() {
       savedLanguage === "en" ? "en" : "zh";
     const frameId = window.requestAnimationFrame(() => {
       setAppLanguage(initialLanguage);
+      setIsLanguageReady(true);
       document.documentElement.lang =
         initialLanguage === "en" ? "en" : "zh-CN";
     });
@@ -675,6 +813,7 @@ export default function Home() {
   const handleLanguageChange = useCallback(
     (language: AppLanguage) => {
       setAppLanguage(language);
+      setIsLanguageReady(true);
       window.localStorage.setItem(
         "musiccompanion-language",
         language,
@@ -1239,6 +1378,11 @@ export default function Home() {
     };
 
     const client = new QwenRealtimeClient({
+      voice: getQwenVoice(appLanguage),
+      instructions:
+        appLanguage === "en"
+          ? `${getAiReplyLanguageInstruction("en")} You are MusicCompanion, listening to music with the user. Base every response on the actual audio and always produce both text and speech.`
+          : `${getAiReplyLanguageInstruction("zh")} 你是 MusicCompanion，正在和用户一起听歌。所有回应必须基于实际音频，并同时生成文字和语音。`,
       onStatusChange: (status) => {
         if (qwenClientRef.current !== client) return;
         setQwenRealtimeStatus(
@@ -1442,6 +1586,7 @@ export default function Home() {
     return client;
   }, [
     addCompanionMessage,
+    appLanguage,
     appendReplyAudio,
     beginReplyAudio,
     clearQwenResponseWatchdog,
@@ -1453,14 +1598,16 @@ export default function Home() {
   ]);
 
   useEffect(() => {
+    if (!isLanguageReady) return;
     connectQwenRealtime();
-  }, [connectQwenRealtime]);
+  }, [connectQwenRealtime, isLanguageReady]);
 
   useEffect(() => {
     const restoreRealtimeConnection = () => {
       if (
         document.visibilityState === "hidden" ||
         !navigator.onLine ||
+        !isLanguageReady ||
         !hasActiveListeningInput ||
         qwenClientRef.current?.isReady()
       ) {
@@ -1495,7 +1642,11 @@ export default function Home() {
         restoreRealtimeConnection,
       );
     };
-  }, [connectQwenRealtime, hasActiveListeningInput]);
+  }, [
+    connectQwenRealtime,
+    hasActiveListeningInput,
+    isLanguageReady,
+  ]);
 
   const sendPromptToQwen = useCallback(
     async ({
@@ -1560,7 +1711,11 @@ export default function Home() {
         }
         const evidenceAwarePrompt = [
           prompt,
-          `本轮实际附带约 ${receivedAudioSeconds.toFixed(1)} 秒连续歌曲音频；必须检查完整音频，尤其是后半段是否已经进入演唱。`,
+          tr(
+            appLanguage,
+            `本轮实际附带约 ${receivedAudioSeconds.toFixed(1)} 秒连续歌曲音频；必须检查完整音频，尤其是后半段是否已经进入演唱。`,
+            `This turn includes about ${receivedAudioSeconds.toFixed(1)} seconds of continuous song audio. Inspect the entire window, especially whether vocals enter in its latter part. Reply only in English.`,
+          ),
         ].join("\n");
 
         waitingForQwenResponseRef.current = true;
@@ -1571,6 +1726,7 @@ export default function Home() {
           !client.commitMusicStream(
             evidenceAwarePrompt,
             communicationModeRef.current === "voice",
+            getQwenVoice(appLanguage),
           )
         ) {
           waitingForQwenResponseRef.current = false;
@@ -1619,6 +1775,7 @@ export default function Home() {
       }
     },
     [
+      appLanguage,
       attachRecentMusicContext,
       audioFile,
       connectQwenRealtime,
@@ -1805,6 +1962,17 @@ export default function Home() {
       qwenReadyRef.current ? "connected" : "idle",
     );
   }, [clearQwenResponseWatchdog, stopReplyAudio]);
+
+  useEffect(() => {
+    if (!isLanguageReady) return;
+    cancelScheduledProactiveComment();
+    cancelActiveProactiveComment();
+  }, [
+    appLanguage,
+    cancelActiveProactiveComment,
+    cancelScheduledProactiveComment,
+    isLanguageReady,
+  ]);
 
   useEffect(() => {
     if (
@@ -2215,7 +2383,13 @@ export default function Home() {
         const connected =
           client.isReady() ||
           (await client.waitUntilReady(15000));
-        if (!connected || !client.startVoiceCall(instructions)) {
+        if (
+          !connected ||
+          !client.startVoiceCall(
+            instructions,
+            getQwenVoice(appLanguage),
+          )
+        ) {
           await new Promise((resolve) =>
             setTimeout(resolve, 300 * 2 ** attempt),
           );
@@ -2549,8 +2723,16 @@ export default function Home() {
           textOnlyReply: true,
         }),
         shouldAttachCurrentMusic
-          ? `本轮在用户文字之前附带了约 ${pendingMusicSeconds.toFixed(1)} 秒截至当前尚未分析的歌曲原音。用户若询问歌词或声音内容，必须以这段音频为第一手证据直接回答。`
-          : "本轮没有可提交的新歌曲音频；只能依据已有对话回答，不得假装刚刚又听到了新的歌词或声音。",
+          ? tr(
+              appLanguage,
+              `本轮在用户文字之前附带了约 ${pendingMusicSeconds.toFixed(1)} 秒截至当前尚未分析的歌曲原音。用户若询问歌词或声音内容，必须以这段音频为第一手证据直接回答。`,
+              `About ${pendingMusicSeconds.toFixed(1)} seconds of previously unanalysed song audio is attached before the user's text. Use it as primary evidence for questions about lyrics or sound, and reply only in English.`,
+            )
+          : tr(
+              appLanguage,
+              "本轮没有可提交的新歌曲音频；只能依据已有对话回答，不得假装刚刚又听到了新的歌词或声音。",
+              "No new song audio is attached. Answer from the existing conversation without pretending to have heard new lyrics or sounds, and reply only in English.",
+            ),
       ].join("\n");
 
       waitingForQwenResponseRef.current = true;
@@ -2561,6 +2743,7 @@ export default function Home() {
         instructions,
         false,
         shouldAttachCurrentMusic,
+        getQwenVoice(appLanguage),
       )) {
         throw new Error("无法发送文字消息。");
       }
