@@ -46,6 +46,13 @@ import type {
   ListeningMessage,
   PlaybackSnapshot,
 } from "@/types/music";
+import {
+  getAiReplyLanguageInstruction,
+  getQwenVoice,
+  localizeRuntimeMessage,
+  tr,
+  type AppLanguage,
+} from "@/lib/i18n";
 
 const INITIAL_PLAYBACK: PlaybackSnapshot = {
   currentTime: 0,
@@ -124,6 +131,7 @@ function createMessageId(): string {
 
 function getRealtimeStatusText(
   status: QwenRealtimeStatus | "not_started",
+  language: AppLanguage,
 ): string {
   const statusText: Record<
     QwenRealtimeStatus | "not_started",
@@ -139,23 +147,26 @@ function getRealtimeStatusText(
     error: "千问 Realtime 出错",
   };
 
-  return statusText[status] ?? status;
+  return localizeRuntimeMessage(statusText[status] ?? status, language);
 }
 
-function getQwenMomentStatusText(status: QwenMomentStatus) {
+function getQwenMomentStatusText(
+  status: QwenMomentStatus,
+  language: AppLanguage,
+) {
   if (status === "connected") {
-    return "Realtime 已连接。播放时会默认把真实歌曲交给千问聆听。";
+    return tr(language, "Realtime 已连接。播放时会默认把真实歌曲交给千问聆听。", "Realtime is connected. Qwen will listen to the actual audio during playback.");
   }
 
   if (status === "commenting") {
-    return "千问正在直接听人声、歌词和音乐，并生成有声回复。";
+    return tr(language, "千问正在直接听人声、歌词和音乐，并生成有声回复。", "Qwen is listening to the vocals, lyrics, and music and preparing a spoken response.");
   }
 
   if (status === "error") {
-    return "Realtime 连接不稳定，暂时无法请求千问。";
+    return tr(language, "Realtime 连接不稳定，暂时无法请求千问。", "The Realtime connection is unstable, so Qwen is temporarily unavailable.");
   }
 
-  return "无需开启选项；播放后千问会自动听歌曲和歌词。";
+  return tr(language, "无需开启选项；播放后千问会自动听歌曲和歌词。", "No setup needed. Qwen will automatically listen to the music and lyrics after playback starts.");
 }
 
 export function isPermanentRealtimeError(message: string) {
@@ -182,12 +193,11 @@ function isDuplicateCompanionReply(
     return true;
   }
 
-  const previousCompanionMessage = previousMessages.findLast(
-    (message) => message.sender === "companion",
+  return previousMessages.some(
+    (message) =>
+      message.sender === "companion" &&
+      normalizeText(message.text) === cleanNextText,
   );
-  return previousCompanionMessage
-    ? normalizeText(previousCompanionMessage.text) === cleanNextText
-    : false;
 }
 
 function formatPlaybackTime(seconds: number) {
@@ -407,10 +417,9 @@ function getHumanReplyGuide(
 ) {
   const baseGuide = [
     "回复风格：像真人正在一起听，不像乐评、不像作文、不像客服。",
-    "可以真情流露，但不要套固定句式或复用本地提示措辞。",
+    "可以真情流露，但不得复述、改写或模仿系统提示中的措辞；每条描述必须由本轮真实音频支持。",
     "每句都要落到具体声音对象、具体变化动作或具体风格依据上；不能只说变活了、清爽、舒服、有感觉。",
     "评论结构优先是：听到的对象/位置 + 它发生了什么 + 你的即时反应。缺任一部分时，宁可短也不要空泛。",
-    "表达参考：可以像“哇，这个咚的一声低音感觉让人心里一颤”“诶，这一句有点意思，很国风的感觉”“后面背景里那个像拨弦的声音好好听，有点像琵琶”这样，把声音、变化和感受说清楚。",
     "如果判断风格，要说出风格名称和依据；如果判断乐器感，只能用不确定表达，并说明依据来自当前听感。",
     "如果没有足够线索，就只基于声音大小、进入、停顿、重复听感这类确定能支持的内容回应。",
     "本轮收到的歌曲原音是第一手证据。回答前完整检查本轮音频从开头到结尾是否出现演唱；一旦出现人声，要优先辨认能确认的歌词片段，并结合唱法、语气与音乐分析。",
@@ -429,10 +438,13 @@ function getHumanReplyGuide(
     return [
       ...baseGuide,
       "本轮新提交的音频只包含用户的麦克风录音，必须把它理解为用户说的话。歌曲由之前的自动听歌轮次提供，禁止把歌曲演唱或历史歌词冒充成用户本轮评论。",
-      "用户消息是当前最高优先级：必须先直接回答用户实际问的问题，不能跳过问题另起一条无关的音乐短评；回答完整后还有必要时，才顺带补充当前听感。",
-      "如果用户要求听歌词、问唱了什么或某一句是什么，答案主体必须是当前音频中能确认的歌词内容；禁止只回复“很温柔”“很好听”“很有感觉”等感叹。听不清时要指出能确认的字词和不确定的位置，不能编造。",
+      "先逐字理解本轮麦克风中用户真正说了什么；用户消息是当前最高优先级。必须直接回答该问题，禁止继续上一条自动短评，禁止另起无关音乐评论。",
+      "如果麦克风中只有呼吸、碰撞、环境杂音、咳声或过短音节，没有形成可理解的问题，只能简短说没有听清用户的话；禁止猜测用户身体不舒服、情绪异常或想换话题。",
+      "如果用户纠正歌曲类型、歌手或风格，例如指出这是K-pop，先明确回应这项纠正，再结合已经听到的节奏、制作、人声语言或英文hook重新判断，不能无视纠正继续输出旧结论。",
+      "如果用户询问歌名、歌手或曲风，可以综合本轮歌曲原音、此前听清的歌词、重复hook、人声语言和制作特征给出最可能的候选；有把握时直接回答，证据不足时使用“更像/可能是”，并简短说明依据。禁止只因单个普通词就武断确定歌名。",
+      "如果用户要求听歌词、问唱了什么或某一句是什么，答案主体必须是当前音频中能确认的歌词内容。歌曲可能包含韩语、英语或混合语言，应按实际语言辨认完整短句和重复hook；禁止只回复听感评价。听不清时要给出已确认的连续片段并标明不确定处，不能只报一个孤立字，也不能编造。",
       "如果用户问“为什么”“怎么听出来的”“哪里像”“怎么确定”或“依据是什么”，必须承接最近一条相关判断：先明确说正在解释哪个结论，再给出上下文中已有的具体声音、节奏、开头、唱腔或变化依据，最后说明它为什么让人产生这种联想。",
-      "解释判断时至少形成“具体线索 + 听感作用 + 原结论”的因果关系，例如：“你看，这个热烈的节奏，还有开头那一声，听着特别有冲劲，就很容易让人联想到东北。”可以达到这种具体程度，但不能机械照抄例句。",
+      "解释判断时至少形成“具体音频线索 + 该线索产生的听感作用 + 原结论”的因果关系，措辞必须根据当前歌曲临时组织，不能套用预设例句。",
       "如果最近的判断缺少足够依据，要坦白说那只是听感联想，再说清目前真正能支持的线索；不要为了回答而编造歌词、乐器、地域或声音细节。",
     ].join("\n");
   }
@@ -451,13 +463,77 @@ function getUserRequestFocusGuide(userText?: string) {
     );
 
   if (asksForLyrics) {
-    return "用户正在询问歌词。第一句就直接给出当前音频中能确认的歌词原词或片段；禁止用演唱很温柔、好听、有感觉等听感评价代替答案。若只能听清一部分，就明确写出听清的部分与不确定处。";
+    return "用户正在询问歌词。先检查最近完整音频窗口中的整句演唱及其前后文，第一句直接给出能确认的连续歌词；注意韩语、英语及混合语言的切换。禁止用听感评价代替答案，也不要只截取句首或一个孤立字；确实只能确认部分时才标出不确定处。";
+  }
+
+  const asksForIdentityOrGenre =
+    /歌名|什么歌|哪首歌|谁唱|歌手|曲风|风格|k[ -]?pop|韩流|韩国歌/u.test(
+      text,
+    );
+
+  if (asksForIdentityOrGenre) {
+    return "用户正在询问或纠正歌名、歌手、曲风。必须先正面回答这一点；综合真实音频中的人声语言、重复hook、歌词关键词、节奏和制作特征给出最可能判断，并区分确定结论与候选，禁止回复无关的即时听感。";
   }
 
   return "先完成用户这句话里的明确要求，再考虑是否需要补充听感；禁止用泛泛的感叹或无关音乐短评代替答案。";
 }
 
+function getEnglishUserRequestFocusGuide(userText?: string) {
+  const text = userText?.trim() ?? "";
+  const asksForLyrics =
+    /lyrics?|what (?:did|is|are).{0,20}(?:sing|sang|saying)|what.{0,12}(?:line|word)|歌词|唱.{0,4}什么/iu.test(
+      text,
+    );
+
+  if (asksForLyrics) {
+    return "The user is asking about lyrics. Inspect the complete recent audio window and its surrounding context. Lead with the longest continuous lyric fragment you can confirm, respecting Korean, English, and mixed-language singing. Never replace the answer with a vague reaction; mark only genuinely uncertain words.";
+  }
+
+  const asksForIdentityOrGenre =
+    /song (?:name|title)|what song|which song|who (?:sings|sang)|artist|singer|genre|style|k[ -]?pop|歌名|歌手|曲风/iu.test(
+      text,
+    );
+
+  if (asksForIdentityOrGenre) {
+    return "The user is asking about or correcting the song title, artist, or genre. Answer that point first. Use the actual vocals, language, repeated hook, lyric clues, rhythm, and production to give the most likely conclusion, clearly separating confidence from candidates. Do not substitute an unrelated listening reaction.";
+  }
+
+  return "Complete the user's explicit request first. Add a listening observation only if it helps; never replace the answer with a generic exclamation or unrelated music comment.";
+}
+
+function getEnglishHumanReplyGuide(kind: QwenPromptKind) {
+  const baseGuide = [
+    "Style: sound like a real person listening alongside the user, not a critic, essayist, or customer-service agent.",
+    "Every observation must be supported by this turn's actual audio and identify a concrete sound, change, vocal detail, lyric, rhythm, or production clue.",
+    "The attached song audio is primary evidence. Listen through the entire window before answering, especially for vocals entering near the end.",
+    "Hearing a vocal and understanding every word are different. If some words are masked, acknowledge the singing and provide the words or vocal qualities you can actually confirm.",
+    "For proactive comments, do not announce that lyrics are unclear. If exact words are uncertain, comment on a clearly audible vocal, rhythmic, or instrumental detail instead.",
+    "Use the newest audio as ground truth. Do not repeat an earlier claim that there are no vocals if singing appears in this turn.",
+    "Do not turn loudness into claims such as harsh, exciting, good, or bad without specific supporting audio evidence.",
+    "Never report Hz, spectral shares, RMS, volume measurements, or detection diagnostics to the user.",
+    "Do not invent lyrics, instruments, regional traits, artists, or song titles. State uncertainty naturally when evidence is incomplete.",
+  ];
+
+  if (kind === "user_reply") {
+    return [
+      ...baseGuide,
+      "The user's current message has the highest priority. Answer it directly instead of continuing a previous automatic comment.",
+      "If microphone audio contains only breathing, a bump, background noise, a cough, or an unintelligible fragment, simply say you did not catch the user's words. Never infer illness, distress, or a topic change.",
+      "If the user corrects the genre, artist, or style, acknowledge the correction and reassess using the rhythm, production, vocal language, and hooks already heard.",
+      "For lyric questions, make the confirmed lyric content the main answer. Preserve the lyric's original language and explain it in English when useful.",
+      "For song, artist, or genre identification, use several real clues and distinguish a confident answer from a possible candidate.",
+      "When asked why, connect a specific audio clue to its perceptual effect and then to the earlier conclusion.",
+    ].join("\n");
+  }
+
+  return [
+    ...baseGuide,
+    "For proactive comments, speak only when this moment gives you something concrete to say. Make it feel spontaneous rather than scheduled.",
+  ].join("\n");
+}
+
 function buildQwenPrompt({
+  language,
   kind,
   audioFile,
   listeningSource,
@@ -468,6 +544,7 @@ function buildQwenPrompt({
   textOnlyReply = false,
   isRevisitedSegment = false,
 }: {
+  language: AppLanguage;
   kind: QwenPromptKind;
   audioFile: File | null;
   listeningSource?: ListeningInputMode;
@@ -502,7 +579,9 @@ function buildQwenPrompt({
       : "暂无。";
   const task =
     kind === "user_reply"
-      ? `用户刚刚${textOnlyReply ? "输入" : "说"}：${userText ?? ""}\n这是一次对用户问题的直接回复，不是新的主动短评。先回答这句话本身，并结合最近对话解释依据，禁止转移话题。`
+      ? textOnlyReply
+        ? `用户刚刚输入：${userText ?? ""}\n这是一次对用户问题的直接回复，不是新的主动短评。先回答这句话本身，并结合最近对话解释依据，禁止转移话题。`
+        : "用户刚刚真正说的话在本轮麦克风音频中。这是一次对用户话语的直接回复，不是新的主动短评。先准确理解并回答用户，再结合歌曲上下文；禁止把系统说明当成用户原话。"
       : "现在到达新的播放时间点，请主动给一句真实的陪听短评。";
   const hasReceivedPlaybackAudio =
     listeningSource !== "file" ||
@@ -511,15 +590,95 @@ function buildQwenPrompt({
   const replyRequirement =
     kind === "user_reply"
       ? hasReceivedPlaybackAudio
-        ? "回复要求：只输出一到两句自然中文，尽量不超过60个中文字符；先把用户的问题回答清楚；不要输出列表；不要说你无法听音频。"
-        : "回复要求：只输出一到两句自然中文，尽量不超过60个中文字符；歌曲尚未实际播放，绝对不能声称听到了旋律、人声或歌词，也不能编造具体音乐内容；如果用户询问歌曲内容，请自然地请用户先开始播放。"
-      : "回复要求：只输出一句话，尽量不超过36个中文字符；像普通用户随口说的；不要输出列表；不要说你无法听音频。";
+        ? tr(language, "回复要求：只输出一到两句自然中文，尽量不超过60个中文字符；先把用户的问题回答清楚；不要输出列表；不要说你无法听音频。", "Response requirements: use one or two natural English sentences, preferably under 45 words; answer the user's question first; do not use a list; do not claim you cannot hear the audio.")
+        : tr(language, "回复要求：只输出一到两句自然中文，尽量不超过60个中文字符；歌曲尚未实际播放，绝对不能声称听到了旋律、人声或歌词，也不能编造具体音乐内容；如果用户询问歌曲内容，请自然地请用户先开始播放。", "Response requirements: use one or two natural English sentences, preferably under 45 words. The song has not played yet, so never claim to have heard its melody, vocals, or lyrics, and do not invent musical details. If asked about the song, naturally ask the user to start playback.")
+      : tr(language, "回复要求：只输出一句话，尽量不超过36个中文字符；像普通用户随口说的；不要输出列表；不要说你无法听音频。", "Response requirements: output one natural English sentence, preferably under 28 words; sound like a casual listener; do not use a list; do not claim you cannot hear the audio.");
   const playbackContext = isRevisitedSegment
     ? "用户把进度拉回了之前听过的一段；可以意识到这是回听/重复听，但不要机械地说“你又回来了”，要像朋友自然发现这段还是值得再听。"
     : "这是当前正常播放到的新位置。";
 
+  if (language === "en") {
+    const englishHistory =
+      recentMessages.length > 0
+        ? recentMessages
+            .map((message) => {
+              const speaker =
+                message.sender === "user" ? "User" : "You";
+              return `${speaker}@${formatPlaybackTime(message.musicTimeSeconds)}: ${message.text}`;
+            })
+            .join("\n")
+        : "None yet.";
+    const englishTask =
+      kind === "user_reply"
+        ? textOnlyReply
+          ? `The user just typed: ${userText ?? ""}\nThis is a direct answer to the user's message, not a new proactive comment. Answer the message itself first and use recent context only when relevant.`
+          : "The newly attached microphone audio contains the user's actual speech. Understand and answer the user directly; do not mistake the song or system instructions for the user's words."
+        : "The song has reached a new moment. Offer one specific, evidence-based listening comment.";
+    const englishSource =
+      listeningSource === "local_speaker"
+        ? "system or browser-tab audio playing on this computer"
+        : listeningSource === "nearby_speaker"
+          ? "music playing from another device and captured by the microphone"
+          : "a music file playing on this page";
+
+    return [
+      getAiReplyLanguageInstruction(language),
+      "You are MusicCompanion, listening to music together with the user.",
+      kind === "proactive_comment"
+        ? "This turn includes the song audio that just played. Listen to it yourself before commenting, and pay particular attention to vocals, lyrics, rhythm, instrumentation, and changes that actually occurred."
+        : textOnlyReply
+          ? "The user is communicating through text. The turn may also include previously unanalysed song audio up to the current moment; fulfil the user's exact request directly."
+          : "The new audio in this turn contains only the user's microphone speech. Answer that speech; do not treat historical song vocals as the user's current words.",
+      replyRequirement,
+      ...(kind === "user_reply"
+        ? [getEnglishUserRequestFocusGuide(userText)]
+        : []),
+      "Be specific: identify the sound, lyric, vocal detail, position, or musical change that supports the response.",
+      "There are no reusable example lines. Compose a fresh response from this turn's real audio and the user's message; avoid stock phrases and do not repeat prior comments.",
+      "Before responding, compare recent messages and avoid reusing the same sound object, judgment, adjective, metaphor, or angle.",
+      "Mention reversed, sped-up, or otherwise processed audio only when the audio provides clear evidence.",
+      getEnglishHumanReplyGuide(kind),
+      `Listening source: ${englishSource}`,
+      ...(audioFile ? [`Song filename: ${audioFile.name}`] : []),
+      ...(fileListeningHint
+        ? [
+            "Filename clue: the audio may be reversed. Treat this only as a clue and verify it against what is actually heard.",
+          ]
+        : []),
+      ...(audioFile
+        ? [
+            `File format: ${inferAudioMimeType(audioFile) || getFileExtension(audioFile.name) || "unknown"}`,
+            `File size: ${formatFileSize(audioFile.size)}`,
+          ]
+        : []),
+      `Playback position: ${currentTime} / ${playback.duration ? formatPlaybackTime(playback.duration) : "unknown"}`,
+      `Playback state: ${playback.isPlaying ? "playing" : "paused"}`,
+      `Audio evidence status: ${
+        hasReceivedPlaybackAudio
+          ? "actual playback audio has been received"
+          : "no playback audio has been received; do not pretend to have heard the song"
+      }`,
+      `Playback context: ${
+        isRevisitedSegment
+          ? "the user returned to an earlier passage; acknowledge this naturally only if relevant"
+          : "this is a new point in normal playback"
+      }`,
+      `Local analysis: ${
+        localAudioFeatures
+          ? `duration ${localAudioFeatures.durationSeconds ? formatPlaybackTime(localAudioFeatures.durationSeconds) : "unknown"}, sample rate ${localAudioFeatures.sampleRate || "unknown"} Hz; use only as a guard, never as a substitute for listening`
+          : "not available"
+      }`,
+      "Recent messages:",
+      englishHistory,
+      "Current task:",
+      englishTask,
+      getAiReplyLanguageInstruction(language),
+    ].join("\n");
+  }
+
   return [
-    "你正在和用户一起听歌，请用中文回复。",
+    getAiReplyLanguageInstruction(language),
+    "你正在和用户一起听歌。",
     kind === "proactive_comment"
       ? "本轮直接附带刚刚实际播放过的歌曲原音。必须先亲自听音频，再评论其中已经发生的声音；默认留意演唱与歌词，不能只根据本地数值或文件信息猜测。"
       : textOnlyReply
@@ -530,9 +689,9 @@ function buildQwenPrompt({
       ? [getUserRequestFocusGuide(userText)]
       : []),
     "具体度要求：不要只给形容词，必须说明“哪里/什么声音/哪种变化”让你产生这个感受。",
-    "可以学习表达参考的具体程度，但不要机械照抄；你需要根据当前上下文自己组织一句新的自然评论。",
-    "生成前必须逐条对照最近你说过的话：不要重复同一个声音对象、同一种变化判断、同一个形容词或同一个比喻；例如已经说过“像拉长的泡泡”，后续就不能换几个字继续说泡泡或拉长感，应改看节奏、空间、音色、结构或情绪中的其他角度。",
-    "如果有明确线索表明音频经过倒放、变速或其他特殊处理，可以直接说“这个是倒放吧！”这类简短自然的判断，不必强行套用完整评论结构；没有线索时不要猜。",
+    "没有可复用的示例句。只能根据本轮真实音频和用户消息临时组织回复，严禁套话或重复历史评论。",
+    "生成前必须逐条对照最近你说过的话：不要重复同一个声音对象、同一种变化判断、同一个形容词或同一个比喻；已经评论过的角度必须跳过，改看其他有真实依据的音乐信息。",
+    "如果有明确线索表明音频经过倒放、变速或其他特殊处理，可以作简短自然的判断；没有线索时不要猜。",
     getHumanReplyGuide(kind),
     `当前听歌来源：${
       listeningSource === "local_speaker"
@@ -574,6 +733,12 @@ function buildQwenPrompt({
 }
 
 export default function Home() {
+  const [appLanguage, setAppLanguage] =
+    useState<AppLanguage>("zh");
+
+  const [isLanguageReady, setIsLanguageReady] =
+    useState(false);
+
   const [audioFile, setAudioFile] = useState<File | null>(
     null,
   );
@@ -628,6 +793,36 @@ export default function Home() {
     useState(false);
 
   const [isSpeakerMuted, setIsSpeakerMuted] = useState(false);
+
+  useEffect(() => {
+    const savedLanguage = window.localStorage.getItem(
+      "musiccompanion-language",
+    );
+    const initialLanguage: AppLanguage =
+      savedLanguage === "en" ? "en" : "zh";
+    const frameId = window.requestAnimationFrame(() => {
+      setAppLanguage(initialLanguage);
+      setIsLanguageReady(true);
+      document.documentElement.lang =
+        initialLanguage === "en" ? "en" : "zh-CN";
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, []);
+
+  const handleLanguageChange = useCallback(
+    (language: AppLanguage) => {
+      setAppLanguage(language);
+      setIsLanguageReady(true);
+      window.localStorage.setItem(
+        "musiccompanion-language",
+        language,
+      );
+      document.documentElement.lang =
+        language === "en" ? "en" : "zh-CN";
+    },
+    [],
+  );
 
   const qwenClientRef = useRef<QwenRealtimeClient | null>(
     null,
@@ -1183,6 +1378,11 @@ export default function Home() {
     };
 
     const client = new QwenRealtimeClient({
+      voice: getQwenVoice(appLanguage),
+      instructions:
+        appLanguage === "en"
+          ? `${getAiReplyLanguageInstruction("en")} You are MusicCompanion, listening to music with the user. Base every response on the actual audio and always produce both text and speech.`
+          : `${getAiReplyLanguageInstruction("zh")} 你是 MusicCompanion，正在和用户一起听歌。所有回应必须基于实际音频，并同时生成文字和语音。`,
       onStatusChange: (status) => {
         if (qwenClientRef.current !== client) return;
         setQwenRealtimeStatus(
@@ -1386,6 +1586,7 @@ export default function Home() {
     return client;
   }, [
     addCompanionMessage,
+    appLanguage,
     appendReplyAudio,
     beginReplyAudio,
     clearQwenResponseWatchdog,
@@ -1397,14 +1598,16 @@ export default function Home() {
   ]);
 
   useEffect(() => {
+    if (!isLanguageReady) return;
     connectQwenRealtime();
-  }, [connectQwenRealtime]);
+  }, [connectQwenRealtime, isLanguageReady]);
 
   useEffect(() => {
     const restoreRealtimeConnection = () => {
       if (
         document.visibilityState === "hidden" ||
         !navigator.onLine ||
+        !isLanguageReady ||
         !hasActiveListeningInput ||
         qwenClientRef.current?.isReady()
       ) {
@@ -1439,7 +1642,11 @@ export default function Home() {
         restoreRealtimeConnection,
       );
     };
-  }, [connectQwenRealtime, hasActiveListeningInput]);
+  }, [
+    connectQwenRealtime,
+    hasActiveListeningInput,
+    isLanguageReady,
+  ]);
 
   const sendPromptToQwen = useCallback(
     async ({
@@ -1504,7 +1711,11 @@ export default function Home() {
         }
         const evidenceAwarePrompt = [
           prompt,
-          `本轮实际附带约 ${receivedAudioSeconds.toFixed(1)} 秒连续歌曲音频；必须检查完整音频，尤其是后半段是否已经进入演唱。`,
+          tr(
+            appLanguage,
+            `本轮实际附带约 ${receivedAudioSeconds.toFixed(1)} 秒连续歌曲音频；必须检查完整音频，尤其是后半段是否已经进入演唱。`,
+            `This turn includes about ${receivedAudioSeconds.toFixed(1)} seconds of continuous song audio. Inspect the entire window, especially whether vocals enter in its latter part. Reply only in English.`,
+          ),
         ].join("\n");
 
         waitingForQwenResponseRef.current = true;
@@ -1515,6 +1726,7 @@ export default function Home() {
           !client.commitMusicStream(
             evidenceAwarePrompt,
             communicationModeRef.current === "voice",
+            getQwenVoice(appLanguage),
           )
         ) {
           waitingForQwenResponseRef.current = false;
@@ -1563,6 +1775,7 @@ export default function Home() {
       }
     },
     [
+      appLanguage,
       attachRecentMusicContext,
       audioFile,
       connectQwenRealtime,
@@ -1678,6 +1891,7 @@ export default function Home() {
         const livePrompt =
           kind === "proactive_comment"
             ? buildQwenPrompt({
+                language: appLanguage,
                 kind,
                 audioFile,
                 listeningSource: listeningInputMode,
@@ -1705,6 +1919,7 @@ export default function Home() {
       return true;
     },
     [
+      appLanguage,
       audioFile,
       hasRecentSustainedLiveAudio,
       listeningInputMode,
@@ -1747,6 +1962,17 @@ export default function Home() {
       qwenReadyRef.current ? "connected" : "idle",
     );
   }, [clearQwenResponseWatchdog, stopReplyAudio]);
+
+  useEffect(() => {
+    if (!isLanguageReady) return;
+    cancelScheduledProactiveComment();
+    cancelActiveProactiveComment();
+  }, [
+    appLanguage,
+    cancelActiveProactiveComment,
+    cancelScheduledProactiveComment,
+    isLanguageReady,
+  ]);
 
   useEffect(() => {
     if (
@@ -2044,6 +2270,7 @@ export default function Home() {
 
     schedulePromptToQwen({
       prompt: buildQwenPrompt({
+        language: appLanguage,
         kind: "proactive_comment",
         audioFile,
         listeningSource: "file",
@@ -2057,6 +2284,7 @@ export default function Home() {
       replaceScheduled: false,
     });
   }, [
+    appLanguage,
     audioFile,
     playback,
     playback.currentTime,
@@ -2137,14 +2365,13 @@ export default function Home() {
     try {
       client = connectQwenRealtime();
       const instructions = buildQwenPrompt({
+        language: appLanguage,
         kind: "user_reply",
         audioFile,
         listeningSource: listeningInputMode,
         playback: playbackRef.current,
         messages: listeningMessagesRef.current,
         localAudioFeatures,
-        userText:
-          "这是持续语音通话。快速、自然地回答用户刚说的话；用户仍在听歌，不要要求暂停音乐。用户语音前的独立音频消息是最近实际采集到的歌曲原音；如果用户问歌词、旋律或刚才唱了什么，必须直接听这段歌曲上下文后回答。",
         isRevisitedSegment:
           revisitedUntilSecondRef.current > 0 &&
           Math.floor(playbackRef.current.currentTime) <=
@@ -2156,7 +2383,13 @@ export default function Home() {
         const connected =
           client.isReady() ||
           (await client.waitUntilReady(15000));
-        if (!connected || !client.startVoiceCall(instructions)) {
+        if (
+          !connected ||
+          !client.startVoiceCall(
+            instructions,
+            getQwenVoice(appLanguage),
+          )
+        ) {
           await new Promise((resolve) =>
             setTimeout(resolve, 300 * 2 ** attempt),
           );
@@ -2209,6 +2442,7 @@ export default function Home() {
       return false;
     }
   }, [
+    appLanguage,
     attachRecentMusicContext,
     audioFile,
     cancelScheduledProactiveComment,
@@ -2302,6 +2536,7 @@ export default function Home() {
       };
       schedulePromptToQwen({
         prompt: buildQwenPrompt({
+          language: appLanguage,
           kind: "proactive_comment",
           audioFile: null,
           listeningSource: listeningInputMode,
@@ -2320,6 +2555,7 @@ export default function Home() {
       clearInterval(commentInterval);
     };
   }, [
+    appLanguage,
     hasRecentSustainedLiveAudio,
     listeningInputMode,
     liveListeningStatus,
@@ -2438,6 +2674,10 @@ export default function Home() {
             0,
             (Date.now() - liveListeningStartedAtRef.current) / 1000,
           );
+    hasRequestedProactiveCommentRef.current = true;
+    lastRealtimeCommentSecondRef.current = Math.floor(
+      musicTimeSeconds,
+    );
     const promptPlayback: PlaybackSnapshot =
       listeningInputMode === "file"
         ? playbackRef.current
@@ -2469,6 +2709,7 @@ export default function Home() {
       const shouldAttachCurrentMusic = pendingMusicSeconds >= 0.25;
       const instructions = [
         buildQwenPrompt({
+          language: appLanguage,
           kind: "user_reply",
           audioFile,
           listeningSource: listeningInputMode,
@@ -2482,8 +2723,16 @@ export default function Home() {
           textOnlyReply: true,
         }),
         shouldAttachCurrentMusic
-          ? `本轮在用户文字之前附带了约 ${pendingMusicSeconds.toFixed(1)} 秒截至当前尚未分析的歌曲原音。用户若询问歌词或声音内容，必须以这段音频为第一手证据直接回答。`
-          : "本轮没有可提交的新歌曲音频；只能依据已有对话回答，不得假装刚刚又听到了新的歌词或声音。",
+          ? tr(
+              appLanguage,
+              `本轮在用户文字之前附带了约 ${pendingMusicSeconds.toFixed(1)} 秒截至当前尚未分析的歌曲原音。用户若询问歌词或声音内容，必须以这段音频为第一手证据直接回答。`,
+              `About ${pendingMusicSeconds.toFixed(1)} seconds of previously unanalysed song audio is attached before the user's text. Use it as primary evidence for questions about lyrics or sound, and reply only in English.`,
+            )
+          : tr(
+              appLanguage,
+              "本轮没有可提交的新歌曲音频；只能依据已有对话回答，不得假装刚刚又听到了新的歌词或声音。",
+              "No new song audio is attached. Answer from the existing conversation without pretending to have heard new lyrics or sounds, and reply only in English.",
+            ),
       ].join("\n");
 
       waitingForQwenResponseRef.current = true;
@@ -2494,6 +2743,7 @@ export default function Home() {
         instructions,
         false,
         shouldAttachCurrentMusic,
+        getQwenVoice(appLanguage),
       )) {
         throw new Error("无法发送文字消息。");
       }
@@ -2544,6 +2794,11 @@ export default function Home() {
     activeQwenPromptKindRef.current = "user_reply";
     qwenResponseMusicTimeRef.current =
       voiceInputMusicTimeRef.current;
+    hasRequestedProactiveCommentRef.current = true;
+    lastRealtimeCommentSecondRef.current = Math.floor(
+      voiceInputMusicTimeRef.current ??
+        playbackRef.current.currentTime,
+    );
     setIsSendingVoice(true);
     voiceResponseActiveRef.current = true;
     setCompanionReplyStatus("thinking");
@@ -2596,6 +2851,29 @@ export default function Home() {
 
       <section style={styles.container}>
         <header style={styles.header}>
+          <div
+            style={styles.languageSelector}
+            role="group"
+            aria-label={tr(appLanguage, "选择语言", "Choose language")}
+          >
+            {(["zh", "en"] as const).map((language) => (
+              <button
+                key={language}
+                type="button"
+                style={{
+                  ...styles.languageButton,
+                  ...(appLanguage === language
+                    ? styles.languageButtonActive
+                    : null),
+                }}
+                aria-pressed={appLanguage === language}
+                onClick={() => handleLanguageChange(language)}
+              >
+                {language === "zh" ? "中文" : "English"}
+              </button>
+            ))}
+          </div>
+
           <div style={styles.brandBadge}>
             <span
               style={styles.brandDot}
@@ -2605,10 +2883,12 @@ export default function Home() {
             MusicCompanion
           </div>
 
-          <h1 style={styles.title}>有人和你一起听</h1>
+          <h1 style={styles.title}>
+            {tr(appLanguage, "有人和你一起听", "Someone is listening with you")}
+          </h1>
 
           <p style={styles.subtitle}>
-            音乐发生的时候，也有人听见。
+            {tr(appLanguage, "音乐发生的时候，也有人听见。", "When the music happens, someone else hears it too.")}
           </p>
         </header>
 
@@ -2616,26 +2896,29 @@ export default function Home() {
           <p style={styles.description}>
             {!audioFile
               ? isPreparingAudio
-                ? "正在准备这个音频文件，稍等一下。"
-                : "选择一首音乐，AI会陪你聊它的听感、情绪和变化。"
+                ? tr(appLanguage, "正在准备这个音频文件，稍等一下。", "Preparing this audio file…")
+                : tr(appLanguage, "选择一首音乐，AI会陪你聊它的听感、情绪和变化。", "Choose a song and AI will listen with you—talking about its sound, mood, and changes.")
               : localFeatureStatus === "analyzing"
-                ? "正在理解这首歌的听感，不影响你直接播放。"
-                : "音乐已准备好。你可以直接播放，千问会按播放时间主动短评。"}
+                ? tr(appLanguage, "正在理解这首歌的听感，不影响你直接播放。", "Analyzing the song while you listen.")
+                : tr(appLanguage, "音乐已准备好。你可以直接播放，千问会按播放时间主动短评。", "Your music is ready. Press play and Qwen will comment as the song unfolds.")}
           </p>
 
           <AudioUploader
+            language={appLanguage}
             disabled={isPreparingAudio}
             onFileSelect={handleFileSelect}
           />
 
           <div className="listening-source-control">
-            <p className="listening-source-label">AI 听音乐的方式</p>
-            <div className="listening-source-options" role="group" aria-label="选择 AI 的音乐输入来源">
+            <p className="listening-source-label">
+              {tr(appLanguage, "AI 听音乐的方式", "How AI hears the music")}
+            </p>
+            <div className="listening-source-options" role="group" aria-label={tr(appLanguage, "选择 AI 的音乐输入来源", "Choose the music source for AI")}>
               {(
                 [
-                  ["file", "上传音乐", "页面内播放"],
-                  ["local_speaker", "系统声音", "直接获取本机音频"],
-                  ["nearby_speaker", "其他设备", "手机·音箱·收音机"],
+                  ["file", tr(appLanguage, "上传音乐", "Upload"), tr(appLanguage, "页面内播放", "Play on this page")],
+                  ["local_speaker", tr(appLanguage, "系统声音", "System audio"), tr(appLanguage, "直接获取本机音频", "Capture this device")],
+                  ["nearby_speaker", tr(appLanguage, "其他设备", "Another device"), tr(appLanguage, "手机·音箱·收音机", "Phone · speaker · radio")],
                 ] as const
               ).map(([mode, label, detail]) => (
                 <button
@@ -2653,10 +2936,10 @@ export default function Home() {
             <p className="listening-source-help" aria-live="polite">
               {listeningInputMode === "file"
                 ? audioFile
-                  ? `AI 正在听页面内的 ${audioFile.name}`
-                  : "上传音乐后，AI 会跟随页面播放器一起听。"
+                  ? tr(appLanguage, `AI 正在听页面内的 ${audioFile.name}`, `AI is listening to ${audioFile.name} on this page`)
+                  : tr(appLanguage, "上传音乐后，AI 会跟随页面播放器一起听。", "Upload music and AI will listen along with the page player.")
                 : liveListeningStatus === "listening"
-                  ? `正在通过 ${liveListeningLabel} 听${
+                  ? tr(appLanguage, `正在通过 ${liveListeningLabel} 听${
                       listeningInputMode === "local_speaker"
                         ? "这台电脑的系统音乐"
                         : "其他设备外放的音乐"
@@ -2664,31 +2947,35 @@ export default function Home() {
                       hasDetectedLiveAudio
                         ? "已检测到真实音频信号。"
                         : "暂未检测到声音，请开始播放并确认共享了音频。"
-                    }`
+                    }`, `Listening through ${localizeRuntimeMessage(liveListeningLabel, appLanguage)} to ${
+                      listeningInputMode === "local_speaker"
+                        ? "this device's system audio"
+                        : "music playing on another device"
+                    }. ${hasDetectedLiveAudio ? "Audio detected." : "No audio detected yet. Start playback and make sure audio sharing is enabled."}`)
                   : liveListeningStatus === "requesting_permission"
                     ? listeningInputMode === "local_speaker"
-                      ? "正在请求系统音频共享…"
-                      : "正在连接麦克风…"
+                      ? tr(appLanguage, "正在请求系统音频共享…", "Requesting system audio sharing…")
+                      : tr(appLanguage, "正在连接麦克风…", "Connecting to the microphone…")
                     : listeningInputMode === "local_speaker"
-                      ? "选择正在播放音乐的标签页或屏幕，并勾选“共享音频”。不会使用摄像头。"
-                      : "用手机、音箱或收音机外放音乐，AI 会通过麦克风和你一起听。"}
+                      ? tr(appLanguage, "选择正在播放音乐的标签页或屏幕，并勾选“共享音频”。不会使用摄像头。", "Choose the tab or screen playing music and enable audio sharing. The camera is never used.")
+                      : tr(appLanguage, "用手机、音箱或收音机外放音乐，AI 会通过麦克风和你一起听。", "Play music on a phone, speaker, or radio and AI will listen through the microphone.")}
             </p>
             {listeningInputMode === "local_speaker" &&
               liveListeningCompatibilityNotice && (
                 <p className="listening-source-help" role="status">
-                  {liveListeningCompatibilityNotice}
+                  {localizeRuntimeMessage(liveListeningCompatibilityNotice, appLanguage)}
                 </p>
               )}
             {listeningInputMode !== "file" && liveListeningError && (
               <p className="voice-record-error" role="alert">
-                {liveListeningError}
+                {localizeRuntimeMessage(liveListeningError, appLanguage)}
               </p>
             )}
           </div>
 
           {audioFileError && (
             <p style={styles.uploadError}>
-              {audioFileError}
+              {localizeRuntimeMessage(audioFileError, appLanguage)}
             </p>
           )}
         </section>
@@ -2701,19 +2988,19 @@ export default function Home() {
               </p>
 
               <p style={styles.realtimeStatus}>
-                {getRealtimeStatusText(qwenRealtimeStatus)}
+                {getRealtimeStatusText(qwenRealtimeStatus, appLanguage)}
               </p>
             </div>
 
           </div>
 
           <p style={styles.realtimeHint}>
-            {getQwenMomentStatusText(qwenMomentStatus)}
+            {getQwenMomentStatusText(qwenMomentStatus, appLanguage)}
           </p>
 
           {qwenRealtimeError && (
             <p style={styles.realtimeError}>
-              {qwenRealtimeError}
+              {localizeRuntimeMessage(qwenRealtimeError, appLanguage)}
             </p>
           )}
 
@@ -2748,6 +3035,7 @@ export default function Home() {
 
                 schedulePromptToQwen({
                   prompt: buildQwenPrompt({
+                    language: appLanguage,
                     kind: "proactive_comment",
                     audioFile,
                     listeningSource: listeningInputMode,
@@ -2763,12 +3051,13 @@ export default function Home() {
                 });
               }}
             >
-              请求千问短评
+              {tr(appLanguage, "请求千问短评", "Ask Qwen to comment")}
             </button>
           )}
         </section>
 
         <MusicPlayer
+          language={appLanguage}
           key={`player-${trackKey}`}
           audioFile={audioFile}
           playerRef={musicPlayerRef}
@@ -2785,7 +3074,10 @@ export default function Home() {
           }
         />
 
-        <ListeningHistory messages={listeningMessages} />
+        <ListeningHistory
+          language={appLanguage}
+          messages={listeningMessages}
+        />
 
         {hasActiveListeningInput && (
           <div
@@ -2793,16 +3085,17 @@ export default function Home() {
             aria-live="polite"
           >
             {companionReplyStatus === "thinking"
-              ? "正在连接千问并发送 messages…"
+              ? tr(appLanguage, "正在连接千问并发送 messages…", "Connecting to Qwen and sending context…")
               : companionReplyStatus === "streaming"
-                ? "千问正在回复中…"
+                ? tr(appLanguage, "千问正在回复中…", "Qwen is responding…")
                 : companionReplyStatus === "error"
-                  ? companionReplyError
-                  : "你发的话会连同最近 messages 一起发给千问 Realtime。"}
+                  ? localizeRuntimeMessage(companionReplyError, appLanguage)
+                  : tr(appLanguage, "你发的话会连同最近 messages 一起发给千问 Realtime。", "Your message and recent listening context will be sent to Qwen Realtime.")}
           </div>
         )}
 
         <UserReplyBox
+          language={appLanguage}
           key={`reply-box-${trackKey}`}
           disabled={!hasActiveListeningInput}
           status={
@@ -2838,7 +3131,7 @@ export default function Home() {
         />
 
         <footer style={styles.footer}>
-          AI 可以听页面音乐、系统声音或其他设备外放；通话麦克风可随时关闭。
+          {tr(appLanguage, "AI 可以听页面音乐、系统声音或其他设备外放；通话麦克风可随时关闭。", "AI can hear music from this page, system audio, or another device. You can mute the call microphone at any time.")}
         </footer>
       </section>
     </main>
@@ -2858,9 +3151,37 @@ const styles: Record<string, CSSProperties> = {
   },
 
   header: {
+    position: "relative",
     width: "100%",
     padding: "20px 10px 8px",
     textAlign: "center",
+  },
+
+  languageSelector: {
+    width: "fit-content",
+    margin: "0 0 12px auto",
+    padding: "3px",
+    display: "flex",
+    gap: "2px",
+    border: "1px solid rgba(113, 137, 180, 0.18)",
+    borderRadius: "999px",
+    background: "rgba(255, 255, 255, 0.58)",
+    backdropFilter: "blur(16px)",
+  },
+
+  languageButton: {
+    border: 0,
+    borderRadius: "999px",
+    padding: "6px 10px",
+    background: "transparent",
+    color: "var(--text-tertiary)",
+    fontSize: "12px",
+    cursor: "pointer",
+  },
+
+  languageButtonActive: {
+    background: "rgba(93, 140, 255, 0.13)",
+    color: "var(--text-secondary)",
   },
 
   brandBadge: {

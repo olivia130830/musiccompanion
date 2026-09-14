@@ -16,8 +16,14 @@ import {
   createPlayableAudioBlob,
   getAcceptedAudioDescription,
 } from "@/lib/audio/formats";
+import {
+  localizeRuntimeMessage,
+  tr,
+  type AppLanguage,
+} from "@/lib/i18n";
 
 type MusicPlayerProps = {
+  language: AppLanguage;
   audioFile: File | null;
   onPlaybackStateChange: (snapshot: PlaybackSnapshot) => void;
   onPlaybackAudioChunk?: (
@@ -66,6 +72,7 @@ function getAudioContextClass() {
 }
 
 export default function MusicPlayer({
+  language,
   audioFile,
   onPlaybackStateChange,
   onPlaybackAudioChunk,
@@ -810,7 +817,13 @@ export default function MusicPlayer({
   if (!audioFile) {
     return (
       <section style={styles.card}>
-        <p style={styles.emptyText}>选择音乐后会出现播放器。</p>
+        <p style={styles.emptyText}>
+          {tr(
+            language,
+            "选择音乐后会出现播放器。",
+            "The player will appear after you choose a song.",
+          )}
+        </p>
       </section>
     );
   }
@@ -819,7 +832,9 @@ export default function MusicPlayer({
     <section style={styles.card}>
       <div style={styles.header}>
         <div>
-          <p style={styles.label}>当前音乐</p>
+          <p style={styles.label}>
+            {tr(language, "当前音乐", "Now playing")}
+          </p>
           <p style={styles.fileName}>{fileLabel}</p>
         </div>
 
@@ -839,7 +854,11 @@ export default function MusicPlayer({
             !hasDecodedAudio ||
             suspendForVoiceRecording
           }
-          aria-label={playback.isPlaying ? "暂停" : "播放"}
+          aria-label={
+            playback.isPlaying
+              ? tr(language, "暂停", "Pause")
+              : tr(language, "播放", "Play")
+          }
         >
           {playback.isPlaying ? "II" : "▶"}
         </button>
@@ -866,16 +885,24 @@ export default function MusicPlayer({
 
       {suspendForVoiceRecording && (
         <p style={styles.emptyText}>
-          录音期间已自动暂停音乐，避免录入系统播放声。
+          {tr(
+            language,
+            "录音期间已自动暂停音乐，避免录入系统播放声。",
+            "Music is paused while recording to keep playback out of the microphone.",
+          )}
         </p>
       )}
 
       {isDecoding && (
-        <p style={styles.emptyText}>正在解码音频…</p>
+        <p style={styles.emptyText}>
+          {tr(language, "正在解码音频…", "Decoding audio…")}
+        </p>
       )}
 
       {playerError && (
-        <p style={styles.errorText}>{playerError}</p>
+        <p style={styles.errorText}>
+          {localizeRuntimeMessage(playerError, language)}
+        </p>
       )}
     </section>
   );
