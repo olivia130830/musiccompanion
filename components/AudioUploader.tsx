@@ -10,13 +10,16 @@ import {
   getAcceptedAudioDescription,
   isSupportedAudioFile,
 } from "@/lib/audio/formats";
+import { tr, type AppLanguage } from "@/lib/i18n";
 
 type AudioUploaderProps = {
+  language: AppLanguage;
   disabled?: boolean;
   onFileSelect: (file: File) => void;
 };
 
 export default function AudioUploader({
+  language,
   disabled = false,
   onFileSelect,
 }: AudioUploaderProps) {
@@ -44,7 +47,11 @@ export default function AudioUploader({
 
             if (!isSupportedAudioFile(file)) {
               setError(
-                `暂不支持这个格式。可上传 ${getAcceptedAudioDescription()}。`,
+                tr(
+                  language,
+                  `暂不支持这个格式。可上传 ${getAcceptedAudioDescription()}。`,
+                  `This format is not supported. Upload ${getAcceptedAudioDescription()} instead.`,
+                ),
               );
               event.target.value = "";
               return;
@@ -56,7 +63,7 @@ export default function AudioUploader({
           }}
         />
 
-        选择音乐文件
+        {tr(language, "选择音乐文件", "Choose a music file")}
       </label>
 
       {error && <p style={styles.error}>{error}</p>}
