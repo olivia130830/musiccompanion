@@ -3,6 +3,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const QWEN_OUTPUT_SAMPLE_RATE = 24000;
+export const MIN_AI_SPEECH_RATE = 0.75;
+export const MAX_AI_SPEECH_RATE = 2;
+
+export function clampAiSpeechRate(rate: number) {
+  return Math.min(
+    MAX_AI_SPEECH_RATE,
+    Math.max(MIN_AI_SPEECH_RATE, rate),
+  );
+}
 
 export function pcm16Base64ToFloat32(audioBase64: string) {
   const binary = atob(audioBase64);
@@ -24,9 +33,13 @@ export function pcm16Base64ToFloat32(audioBase64: string) {
 export function usePcmAudioPlayer() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolumeState] = useState(1);
+  const [speechRate, setSpeechRateState] = useState(1);
   const volumeRef = useRef(1);
+  const volumeBoostRef = useRef(1);
+  const speechRateRef = useRef(1);
   const contextRef = useRef<AudioContext | null>(null);
   const gainRef = useRef<GainNode | null>(null);
+  const compressorRef = useRef<DynamicsCompressorNode | null>(null);
   const sourcesRef = useRef(new Set<AudioBufferSourceNode>());
   const nextStartTimeRef = useRef(0);
   const streamDoneRef = useRef(true);
@@ -53,9 +66,17 @@ export function usePcmAudioPlayer() {
   const getGain = useCallback((context: AudioContext) => {
     if (!gainRef.current) {
       const gain = context.createGain();
-      gain.gain.value = volumeRef.current;
-      gain.connect(context.destination);
+      const compressor = context.createDynamicsCompressor();
+      compressor.threshold.value = -12;
+      compressor.knee.value = 12;
+      compressor.ratio.value = 4;
+      compressor.attack.value = 0.003;
+      compressor.release.value = 0.2;
+      gain.gain.value = volumeRef.current * volumeBoostRef.current;
+      gain.connect(compressor);
+      compressor.connect(context.destination);
       gainRef.current = gain;
+      compressorRef.current = compressor;
     }
 
     return gainRef.current;
@@ -70,8 +91,31 @@ export function usePcmAudioPlayer() {
     const context = contextRef.current;
     const gain = gainRef.current;
     if (context && gain) {
-      gain.gain.setValueAtTime(normalizedVolume, context.currentTime);
+      gain.gain.setValueAtTime(
+        normalizedVolume * volumeBoostRef.current,
+        context.currentTime,
+      );
     }
+  }, []);
+
+  const setVolumeBoost = useCallback((boost: number) => {
+    const normalizedBoost = Math.min(2.5, Math.max(0.5, boost));
+    volumeBoostRef.current = normalizedBoost;
+
+    const context = contextRef.current;
+    const gain = gainRef.current;
+    if (context && gain) {
+      gain.gain.setValueAtTime(
+        volumeRef.current * normalizedBoost,
+        context.currentTime,
+      );
+    }
+  }, []);
+
+  const setSpeechRate = useCallback((rate: number) => {
+    const normalizedRate = clampAiSpeechRate(rate);
+    speechRateRef.current = normalizedRate;
+    setSpeechRateState(normalizedRate);
   }, []);
 
   const prepare = useCallback(async () => {
@@ -116,13 +160,15 @@ export function usePcmAudioPlayer() {
 
       const source = context.createBufferSource();
       source.buffer = buffer;
+      source.playbackRate.value = speechRateRef.current;
       source.connect(getGain(context));
 
       const startTime = Math.max(
         context.currentTime + 0.02,
         nextStartTimeRef.current,
       );
-      nextStartTimeRef.current = startTime + buffer.duration;
+      nextStartTimeRef.current =
+        startTime + buffer.duration / speechRateRef.current;
       streamDoneRef.current = false;
       sourcesRef.current.add(source);
       setIsPlaying(true);
@@ -158,6 +204,8 @@ export function usePcmAudioPlayer() {
       sourcesRef.current.clear();
       gainRef.current?.disconnect();
       gainRef.current = null;
+      compressorRef.current?.disconnect();
+      compressorRef.current = null;
       void contextRef.current?.close();
       contextRef.current = null;
     },
@@ -167,7 +215,10 @@ export function usePcmAudioPlayer() {
   return {
     isPlaying,
     volume,
+    speechRate,
     setVolume,
+    setVolumeBoost,
+    setSpeechRate,
     prepare,
     begin,
     append,
