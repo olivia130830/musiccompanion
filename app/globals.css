@@ -1500,3 +1500,650 @@ input[type="range"]:focus-visible {
     animation: none;
   }
 }
+
+/* 登录与账号 */
+
+.login-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(480px, 1.08fr) minmax(480px, 0.92fr);
+  background: #f8faff;
+}
+
+.login-visual-panel {
+  position: relative;
+  isolation: isolate;
+  min-height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: clamp(34px, 5vw, 72px) clamp(34px, 6vw, 96px);
+  background:
+    linear-gradient(145deg, rgba(11, 31, 72, 0.98), rgba(39, 52, 119, 0.96) 52%, rgba(78, 60, 142, 0.94)),
+    #142653;
+  color: #ffffff;
+}
+
+.login-visual-panel::before,
+.login-visual-panel::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  border: 1px solid rgba(156, 197, 255, 0.16);
+  border-radius: 50%;
+}
+
+.login-visual-panel::before {
+  width: 720px;
+  height: 720px;
+  top: -430px;
+  right: -220px;
+}
+
+.login-visual-panel::after {
+  width: 520px;
+  height: 520px;
+  left: -330px;
+  bottom: -260px;
+}
+
+.login-visual-glow {
+  position: absolute;
+  z-index: -1;
+  width: 380px;
+  height: 380px;
+  border-radius: 50%;
+  filter: blur(100px);
+  opacity: 0.32;
+  pointer-events: none;
+}
+
+.login-visual-glow-blue {
+  top: 18%;
+  right: -90px;
+  background: #4f9dff;
+}
+
+.login-visual-glow-purple {
+  left: 12%;
+  bottom: 4%;
+  background: #9d73ff;
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.login-brand-mark {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 15px;
+  background: linear-gradient(145deg, #5d8cff, #816bea);
+  box-shadow: 0 16px 44px rgba(22, 52, 128, 0.38);
+}
+
+.login-brand-mark span {
+  width: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.login-brand-mark span:nth-child(1) { height: 13px; }
+.login-brand-mark span:nth-child(2) { height: 25px; }
+.login-brand-mark span:nth-child(3) { height: 18px; }
+
+.login-brand strong,
+.login-brand small {
+  display: block;
+}
+
+.login-brand strong {
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.login-brand small {
+  margin-top: 2px;
+  color: rgba(185, 218, 255, 0.74);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+}
+
+.login-visual-copy {
+  position: relative;
+  z-index: 2;
+  width: min(640px, 100%);
+  margin: clamp(80px, 13vh, 150px) 0 0;
+}
+
+.login-eyebrow,
+.login-visual-footer {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: rgba(175, 221, 255, 0.82);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.24em;
+}
+
+.login-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.login-eyebrow span {
+  width: 28px;
+  height: 1px;
+  background: #83caff;
+}
+
+.login-visual-copy h1 {
+  margin: 32px 0 22px;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  font-size: clamp(44px, 5.2vw, 76px);
+  font-weight: 680;
+  line-height: 1.16;
+  letter-spacing: -0.055em;
+}
+
+.login-visual-copy > p:not(.login-eyebrow) {
+  max-width: 570px;
+  color: rgba(220, 231, 255, 0.72);
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  font-size: 15px;
+  line-height: 1.9;
+}
+
+.login-feature-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 32px;
+}
+
+.login-feature-pills span {
+  padding: 8px 14px;
+  border: 1px solid rgba(164, 207, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(148, 191, 255, 0.06);
+  color: rgba(221, 237, 255, 0.76);
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  font-size: 11px;
+}
+
+.login-music-art {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-height: 270px;
+  margin-top: 28px;
+}
+
+.login-record {
+  position: absolute;
+  left: 38%;
+  bottom: 8%;
+  width: 146px;
+  height: 146px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(146, 196, 255, 0.24);
+  border-radius: 50%;
+  background:
+    repeating-radial-gradient(circle, transparent 0 8px, rgba(158, 197, 255, 0.055) 9px 10px),
+    radial-gradient(circle, #597bd9 0 13%, #182d67 14% 48%, #0c193d 49%);
+  box-shadow: 0 28px 80px rgba(2, 10, 38, 0.42), 0 0 60px rgba(92, 133, 255, 0.12);
+}
+
+.login-record-groove {
+  position: absolute;
+  inset: 22px;
+  border: 1px solid rgba(197, 221, 255, 0.12);
+  border-radius: 50%;
+}
+
+.login-record-label {
+  position: relative;
+  z-index: 1;
+  color: #eff6ff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 27px;
+  font-weight: 700;
+}
+
+.login-orbit {
+  position: absolute;
+  left: 5%;
+  right: 3%;
+  bottom: 24%;
+  height: 90px;
+  border-bottom: 1px dashed rgba(104, 184, 255, 0.32);
+  border-radius: 50%;
+  transform: rotate(3deg);
+}
+
+.login-orbit-two {
+  bottom: 11%;
+  transform: rotate(-5deg);
+  border-color: rgba(173, 127, 255, 0.28);
+}
+
+.login-waveform {
+  position: absolute;
+  right: 3%;
+  bottom: 16%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 84px;
+}
+
+.login-waveform span {
+  width: 3px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #8ed6ff, #9e78ff);
+  box-shadow: 0 0 10px rgba(115, 183, 255, 0.36);
+}
+
+.login-art-note {
+  position: absolute;
+  color: rgba(180, 220, 255, 0.58);
+  font-family: sans-serif;
+}
+
+.login-art-note-one {
+  left: 12%;
+  bottom: 20%;
+  font-size: 25px;
+}
+
+.login-art-note-two {
+  right: 22%;
+  bottom: 50%;
+  font-size: 20px;
+}
+
+.login-visual-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 24px;
+  color: rgba(169, 204, 240, 0.5);
+  font-size: 9px;
+}
+
+.login-visual-footer span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #73d8de;
+  box-shadow: 0 0 12px #73d8de;
+}
+
+.login-form-panel {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 54px clamp(34px, 6vw, 92px) 30px;
+  background:
+    radial-gradient(circle at 94% 3%, rgba(187, 218, 255, 0.34), transparent 34%),
+    radial-gradient(circle at 5% 100%, rgba(207, 190, 255, 0.24), transparent 30%),
+    #f9fbff;
+}
+
+.login-mobile-brand {
+  display: none;
+}
+
+.login-card {
+  width: min(520px, 100%);
+}
+
+.login-form-eyebrow {
+  color: var(--accent);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.24em;
+}
+
+.login-card h2 {
+  margin-top: 17px;
+  color: #152039;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  font-size: clamp(36px, 4vw, 48px);
+  font-weight: 690;
+  line-height: 1.1;
+  letter-spacing: -0.05em;
+}
+
+.login-form-subtitle {
+  margin-top: 13px;
+  color: var(--text-secondary);
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  font-size: 14px;
+}
+
+.login-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-top: 42px;
+  padding: 5px;
+  border: 1px solid rgba(111, 132, 169, 0.13);
+  border-radius: 15px;
+  background: rgba(232, 238, 248, 0.7);
+}
+
+.login-tabs button {
+  padding: 11px;
+  border-radius: 11px;
+  background: transparent;
+  color: #8290a9;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  transition: background 160ms ease, color 160ms ease, box-shadow 160ms ease;
+}
+
+.login-tabs .login-tab-active {
+  background: rgba(255, 255, 255, 0.96);
+  color: #24304b;
+  box-shadow: 0 7px 20px rgba(74, 99, 150, 0.08);
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  margin-top: 28px;
+}
+
+.login-form > label {
+  margin: 0 0 8px 2px;
+  color: #39445b;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.login-form > label:not(:first-child) {
+  margin-top: 19px;
+}
+
+.login-input-wrap {
+  height: 58px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  border: 1px solid rgba(107, 131, 174, 0.24);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.88);
+  color: #9aa7bc;
+  box-shadow: 0 8px 26px rgba(65, 90, 140, 0.04);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.login-input-wrap:focus-within {
+  border-color: rgba(85, 120, 237, 0.58);
+  box-shadow: 0 0 0 4px rgba(85, 120, 237, 0.09), 0 12px 30px rgba(65, 90, 140, 0.07);
+}
+
+.login-input-wrap > span {
+  min-width: 18px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 15px;
+  text-align: center;
+}
+
+.login-input-wrap input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #22304b;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  font-size: 14px;
+}
+
+.login-input-wrap input::placeholder {
+  color: #adb8c9;
+}
+
+.login-input-wrap input:disabled {
+  color: #69758a;
+  opacity: 0.8;
+}
+
+.login-password-toggle {
+  flex: none;
+  padding: 5px;
+  background: transparent;
+  color: #8491a7;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  font-size: 11px;
+}
+
+.login-password-toggle:disabled {
+  opacity: 0.48;
+}
+
+.login-primary-button {
+  height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 26px;
+  padding: 0 21px;
+  border-radius: 14px;
+  background: linear-gradient(110deg, #5578ed, #8170eb);
+  color: #ffffff;
+  box-shadow: 0 17px 38px rgba(85, 103, 218, 0.22);
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  font-size: 14px;
+  font-weight: 650;
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.login-primary-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 21px 44px rgba(85, 103, 218, 0.29);
+}
+
+.login-primary-button span {
+  font-size: 21px;
+  font-weight: 400;
+}
+
+.login-primary-button:disabled {
+  opacity: 0.62;
+}
+
+.login-intent-switch {
+  align-self: center;
+  margin-top: 15px;
+  padding: 5px;
+  background: transparent;
+  color: var(--accent);
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  font-size: 12px;
+}
+
+.login-feedback {
+  margin-top: 16px;
+  padding: 11px 13px;
+  border-radius: 11px;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.login-success {
+  background: rgba(76, 185, 143, 0.1);
+  color: #347b62;
+}
+
+.login-error {
+  background: rgba(211, 75, 98, 0.09);
+  color: #ad4255;
+}
+
+.login-setup {
+  border: 1px dashed rgba(85, 120, 237, 0.25);
+  background: rgba(85, 120, 237, 0.07);
+  color: #53659b;
+}
+
+.login-security-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 24px;
+  padding: 16px;
+  border: 1px solid rgba(112, 136, 178, 0.16);
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.6);
+  color: #6f7b91;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+}
+
+.login-security-note > span {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(92, 126, 238, 0.11);
+  color: #5578ed;
+  font-size: 12px;
+}
+
+.login-security-note strong {
+  display: block;
+  color: #455169;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.login-security-note p {
+  margin-top: 3px;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.login-footer {
+  width: min(520px, 100%);
+  margin-top: auto;
+  padding-top: 48px;
+  color: #a2acc0;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  font-size: 9px;
+  text-align: center;
+}
+
+.account-menu {
+  position: absolute;
+  top: 20px;
+  left: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.account-chip,
+.account-signout {
+  border: 1px solid rgba(113, 137, 180, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--text-secondary);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  font-size: 10px;
+}
+
+.account-chip {
+  max-width: 180px;
+  overflow: hidden;
+  padding: 7px 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-signout {
+  padding: 7px 10px;
+  cursor: pointer;
+}
+
+.account-signout:hover {
+  color: #c34f5d;
+}
+
+@media (max-width: 980px) {
+  .login-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .login-visual-panel {
+    display: none;
+  }
+
+  .login-form-panel {
+    padding-top: 32px;
+  }
+
+  .login-mobile-brand {
+    width: min(520px, 100%);
+    display: block;
+    margin-bottom: auto;
+    padding-bottom: 44px;
+    color: var(--accent);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 16px;
+    font-weight: 700;
+  }
+}
+
+@media (max-width: 600px) {
+  .login-form-panel {
+    justify-content: flex-start;
+    padding: 25px 20px 24px;
+  }
+
+  .login-mobile-brand {
+    margin-bottom: 0;
+    padding-bottom: 48px;
+  }
+
+  .login-card h2 {
+    font-size: 37px;
+  }
+
+  .login-tabs {
+    margin-top: 34px;
+  }
+
+  .login-footer {
+    margin-top: 48px;
+    padding-top: 0;
+  }
+
+  .account-menu {
+    position: static;
+    justify-content: center;
+    margin: 0 auto 10px;
+  }
+}

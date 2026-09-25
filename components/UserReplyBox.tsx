@@ -46,6 +46,7 @@ interface UserReplyBoxProps {
   isCallConnected: boolean;
   isPlayingReply: boolean;
   aiVolume: number;
+  aiSpeechRate: number;
   communicationMode: CommunicationMode;
   isTextSending: boolean;
   onStartRecording: () => Promise<boolean>;
@@ -55,6 +56,7 @@ interface UserReplyBoxProps {
   onHangUp: () => void | Promise<void>;
   onStopReply: () => void;
   onAiVolumeChange: (volume: number) => void;
+  onAiSpeechRateChange: (rate: number) => void;
   onCommunicationModeChange: (mode: CommunicationMode) => void;
   onSendText: (text: string) => Promise<boolean>;
 }
@@ -90,6 +92,7 @@ export default function UserReplyBox({
   isCallConnected,
   isPlayingReply,
   aiVolume,
+  aiSpeechRate,
   communicationMode,
   isTextSending,
   onStartRecording,
@@ -99,6 +102,7 @@ export default function UserReplyBox({
   onHangUp,
   onStopReply,
   onAiVolumeChange,
+  onAiSpeechRateChange,
   onCommunicationModeChange,
   onSendText,
 }: UserReplyBoxProps) {
@@ -383,6 +387,36 @@ export default function UserReplyBox({
           style={
             {
               "--ai-volume-progress": `${aiVolume * 100}%`,
+            } as CSSProperties
+          }
+        />
+      </div>
+
+      <div hidden={communicationMode === "text"} className="ai-volume-control">
+        <div className="ai-volume-heading">
+          <span className="ai-volume-label">
+            {tr(language, "AI 语速", "AI speech rate")}
+          </span>
+          <output htmlFor="ai-speech-rate-slider">
+            {aiSpeechRate.toFixed(2)}×
+          </output>
+        </div>
+        <input
+          id="ai-speech-rate-slider"
+          className="ai-volume-slider"
+          type="range"
+          min="0.75"
+          max="2"
+          step="0.05"
+          value={aiSpeechRate}
+          aria-label={tr(language, "调整 AI 回复语速", "Adjust AI speech rate")}
+          aria-valuetext={`${aiSpeechRate.toFixed(2)}×`}
+          onInput={(event) => {
+            onAiSpeechRateChange(Number(event.currentTarget.value));
+          }}
+          style={
+            {
+              "--ai-volume-progress": `${((aiSpeechRate - 0.75) / 1.25) * 100}%`,
             } as CSSProperties
           }
         />
