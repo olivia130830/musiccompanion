@@ -16,8 +16,9 @@ qwenRealtimeUrl.searchParams.set("model", QWEN_REALTIME_MODEL);
 const QWEN_REALTIME_URL = qwenRealtimeUrl.toString();
 
 if (!DASHSCOPE_API_KEY) {
-  console.error("[Proxy] 缺少 DASHSCOPE_API_KEY。请检查 .env.local。");
-  process.exit(1);
+  console.warn(
+    "[Proxy] 尚未配置 DASHSCOPE_API_KEY。页面仍可启动，但千问语音功能暂不可用。",
+  );
 }
 
 const server = createServer((request, response) => {
@@ -27,7 +28,8 @@ const server = createServer((request, response) => {
     });
     response.end(
       JSON.stringify({
-        ok: true,
+        ok: Boolean(DASHSCOPE_API_KEY),
+        configured: Boolean(DASHSCOPE_API_KEY),
         model: QWEN_REALTIME_MODEL,
       }),
     );
@@ -55,6 +57,18 @@ function safeSend(socket, data) {
 
 wss.on("connection", (browserSocket) => {
   console.log("[Proxy] 浏览器已连接。");
+
+  if (!DASHSCOPE_API_KEY) {
+    safeSend(
+      browserSocket,
+      JSON.stringify({
+        type: "proxy.error",
+        error: "尚未配置 DASHSCOPE_API_KEY，请在 .env.local 中添加后重启。",
+      }),
+    );
+    browserSocket.close(1011, "DASHSCOPE_API_KEY is not configured");
+    return;
+  }
 
   let qwenSocket = null;
   let qwenSessionCreated = false;

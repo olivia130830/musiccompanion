@@ -4,7 +4,10 @@ import {
   float32ToPcm16Base64,
   resampleMonoFloat32,
 } from "@/lib/audio/pcm16";
-import { pcm16Base64ToFloat32 } from "@/hooks/usePcmAudioPlayer";
+import {
+  clampAiSpeechRate,
+  pcm16Base64ToFloat32,
+} from "@/hooks/usePcmAudioPlayer";
 
 describe("PCM16 conversion", () => {
   it("resamples to 16 kHz", () => {
@@ -34,5 +37,11 @@ describe("PCM16 conversion", () => {
     const decoded = pcm16Base64ToFloat32(encoded);
 
     expect(Array.from(decoded)).toEqual([-1, 0, 1]);
+  });
+
+  it("keeps user-selected speech rate within the supported range", () => {
+    expect(clampAiSpeechRate(0.2)).toBe(0.75);
+    expect(clampAiSpeechRate(1.6)).toBe(1.6);
+    expect(clampAiSpeechRate(3)).toBe(2);
   });
 });

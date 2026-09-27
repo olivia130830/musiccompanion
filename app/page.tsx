@@ -26,6 +26,7 @@ import {
 } from "@/lib/audio/pcm16";
 
 import AudioUploader from "@/components/AudioUploader";
+import AccountMenu from "@/components/AccountMenu";
 import ListeningHistory from "@/components/ListeningHistory";
 import MusicPlayer from "@/components/MusicPlayer";
 import type { MusicPlayerHandle } from "@/components/MusicPlayer";
@@ -1038,13 +1039,36 @@ export default function Home() {
   const {
     isPlaying: isPlayingReply,
     volume: aiReplyVolume,
+    speechRate: aiSpeechRate,
     setVolume: setAiReplyVolume,
+    setVolumeBoost: setAiReplyVolumeBoost,
+    setSpeechRate: setAiSpeechRate,
     prepare: prepareReplyAudio,
     begin: beginReplyAudio,
     append: appendReplyAudio,
     finish: finishReplyAudio,
     stop: stopReplyAudio,
   } = usePcmAudioPlayer();
+
+  useEffect(() => {
+    setAiReplyVolumeBoost(appLanguage === "en" ? 1.8 : 1);
+    const savedRate = Number(
+      window.localStorage.getItem(
+        `musiccompanion-speech-rate-${appLanguage}`,
+      ),
+    );
+    setAiSpeechRate(
+      Number.isFinite(savedRate) && savedRate > 0
+        ? savedRate
+        : appLanguage === "en"
+          ? 1.6
+          : 1,
+    );
+  }, [
+    appLanguage,
+    setAiReplyVolumeBoost,
+    setAiSpeechRate,
+  ]);
 
   const clearQwenResponseWatchdog = useCallback(() => {
     if (qwenResponseTimeoutRef.current) {
@@ -2601,6 +2625,14 @@ export default function Home() {
     if (volume > 0) lastAiReplyVolumeRef.current = volume;
   };
 
+  const handleAiSpeechRateChange = (rate: number) => {
+    setAiSpeechRate(rate);
+    window.localStorage.setItem(
+      `musiccompanion-speech-rate-${appLanguage}`,
+      String(rate),
+    );
+  };
+
   const handleHangUp = async () => {
     clearVoiceResponseWatchdog();
     const voiceClient = qwenVoiceClientRef.current;
@@ -2851,6 +2883,8 @@ export default function Home() {
 
       <section style={styles.container}>
         <header style={styles.header}>
+          <AccountMenu language={appLanguage} />
+
           <div
             style={styles.languageSelector}
             role="group"
@@ -3117,6 +3151,7 @@ export default function Home() {
           isCallConnected={isVoiceCallConnected}
           isPlayingReply={isPlayingReply}
           aiVolume={aiReplyVolume}
+          aiSpeechRate={aiSpeechRate}
           communicationMode={communicationMode}
           isTextSending={isSendingText}
           onStartRecording={handleVoiceStart}
@@ -3126,6 +3161,7 @@ export default function Home() {
           onHangUp={handleHangUp}
           onStopReply={stopReplyAudio}
           onAiVolumeChange={handleAiVolumeChange}
+          onAiSpeechRateChange={handleAiSpeechRateChange}
           onCommunicationModeChange={handleCommunicationModeChange}
           onSendText={handleSendText}
         />
