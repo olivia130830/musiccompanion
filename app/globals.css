@@ -1870,6 +1870,36 @@ input[type="range"]:focus-visible {
   margin-top: 28px;
 }
 
+.login-channel-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+  margin-bottom: 2px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(238, 242, 250, 0.84);
+}
+
+.login-channel-switch button {
+  padding: 9px 8px;
+  border-radius: 9px;
+  background: transparent;
+  color: #8794aa;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.login-channel-switch .login-channel-active {
+  background: #ffffff;
+  color: #5578ed;
+  box-shadow: 0 5px 16px rgba(74, 99, 150, 0.09);
+}
+
+.login-channel-switch button:disabled {
+  cursor: default;
+}
+
 .login-form > label {
   margin: 0 0 8px 2px;
   color: #39445b;

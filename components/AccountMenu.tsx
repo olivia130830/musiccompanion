@@ -9,7 +9,7 @@ type AccountMenuProps = {
 };
 
 export default function AccountMenu({ language }: AccountMenuProps) {
-  const [email, setEmail] = useState("");
+  const [accountLabel, setAccountLabel] = useState("");
 
   useEffect(() => {
     void fetch("/auth-api/auth/session", {
@@ -17,10 +17,10 @@ export default function AccountMenu({ language }: AccountMenuProps) {
       cache: "no-store",
     })
       .then((response) => response.ok ? response.json() : null)
-      .then((result: { user?: { email?: string } } | null) => {
-        setEmail(result?.user?.email ?? "");
+      .then((result: { user?: { email?: string; phone?: string } } | null) => {
+        setAccountLabel(result?.user?.email ?? result?.user?.phone ?? "");
       })
-      .catch(() => setEmail(""));
+      .catch(() => setAccountLabel(""));
   }, []);
 
   const handleSignOut = async () => {
@@ -33,7 +33,9 @@ export default function AccountMenu({ language }: AccountMenuProps) {
 
   return (
     <div className="account-menu" aria-label={language === "zh" ? "账号" : "Account"}>
-      {email && <span className="account-chip" title={email}>{email}</span>}
+      {accountLabel && (
+        <span className="account-chip" title={accountLabel}>{accountLabel}</span>
+      )}
       <button className="account-signout" type="button" onClick={() => void handleSignOut()}>
         {language === "zh" ? "退出" : "Sign out"}
       </button>

@@ -2,7 +2,7 @@
 
 ## Account authentication
 
-The app uses its own NestJS authentication service, PostgreSQL, and Nodemailer with Gmail SMTP. Supabase is not used.
+The app uses its own NestJS authentication service and PostgreSQL. Email codes are sent with Nodemailer/Gmail SMTP, and phone codes are sent with Alibaba Cloud SMS. Supabase is not used.
 
 Create `.env.local` from the included template:
 
@@ -30,7 +30,9 @@ SMTP_FROM=MusicCompanion <your-account@gmail.com>
 - Qwen realtime proxy on `127.0.0.1:8787`
 - Next.js on `127.0.0.1:3000`
 
-The NestJS service creates the required PostgreSQL tables and indexes automatically. Verification codes expire after 10 minutes, are hashed before storage, allow five attempts, and are limited to one send per minute and five sends per hour per email.
+The NestJS service creates and migrates the required PostgreSQL tables and indexes automatically. Email and phone verification codes expire after 10 minutes, are hashed before storage, allow five attempts, and are limited to one send per minute and five sends per hour per destination.
+
+To enable phone verification codes, configure the four `ALIBABA_CLOUD_*` values shown in `.env.example`. The SMS signature and verification-code template must already be approved in the Alibaba Cloud SMS console, and the template variable must be named `code`.
 
 For production, deploy the NestJS service to a persistent Node.js host and set Vercel's `AUTH_BACKEND_URL` to its HTTPS URL. The Next.js rewrite keeps browser requests first-party so the session can remain in an HttpOnly cookie.
 

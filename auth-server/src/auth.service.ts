@@ -21,6 +21,7 @@ import { promisify } from "node:util";
 
 import { DatabaseService } from "./database.service.js";
 import { MailerService } from "./mailer.service.js";
+import { SmsService } from "./sms.service.js";
 
 const scrypt = promisify(scryptCallback);
 const OTP_TTL_MINUTES = 10;
@@ -30,7 +31,13 @@ const OTP_MAX_ATTEMPTS = 5;
 const SESSION_TTL_DAYS = 30;
 
 type CodePurpose = "login" | "signup";
-type UserRow = { id: string; email: string; password_hash: string | null };
+type VerificationChannel = "email" | "phone";
+type UserRow = {
+  id: string;
+  email: string | null;
+  phone: string | null;
+  password_hash: string | null;
+};
 type CodeRow = {
   id: string;
   code_hash: string;
@@ -44,6 +51,7 @@ export class AuthService {
   constructor(
     @Inject(DatabaseService) private readonly database: DatabaseService,
     @Inject(MailerService) private readonly mailer: MailerService,
+    @Inject(SmsService) private readonly sms: SmsService,
   ) {}
 
   private normalizeEmail(value: unknown) {
@@ -54,6 +62,36 @@ export class AuthService {
     return email;
   }
 
+  private normalizePhone(value: unknown) {
+    const raw = typeof value === "string" ? value.trim() : "";
+    const compact = raw.replace(/[\s()-]/g, "");
+    if (/^1[3-9]\d{9}$/.test(compact)) return `+86${compact}`;
+    if (/^(?:\+86|0086|86)1[3-9]\d{9}$/.test(compact)) {
+      return `+86${compact.replace(/^(?:\+86|0086|86)/, "")}`;
+    }
+    if (!/^\+[1-9]\d{7,14}$/.test(compact)) {
+      throw new BadRequestException("请输入有效的手机号码（含国家区号）。");
+    }
+    return compact;
+  }
+
+  private getTarget(input: {
+    channel?: unknown;
+    identifier?: unknown;
+    email?: unknown;
+    phone?: unknown;
+  }) {
+    const channel: VerificationChannel =
+      input.channel === "phone" ? "phone" : "email";
+    const raw =
+      input.identifier ?? (channel === "phone" ? input.phone : input.email);
+    const target =
+      channel === "phone"
+        ? this.normalizePhone(raw)
+        : this.normalizeEmail(raw);
+    return { channel, target };
+  }
+
   private getOtpSecret() {
     const secret = process.env.OTP_HASH_SECRET?.trim();
     if (!secret || secret.length < 32) {
@@ -62,9 +100,14 @@ export class AuthService {
     return secret;
   }
 
-  private hashCode(email: string, purpose: CodePurpose, code: string) {
+  private hashCode(
+    channel: VerificationChannel,
+    target: string,
+    purpose: CodePurpose,
+    code: string,
+  ) {
     return createHmac("sha256", this.getOtpSecret())
-      .update(`${email}:${purpose}:${code}`)
+      .update(`${channel}:${target}:${purpose}:${code}`)
       .digest("hex");
   }
 
@@ -90,11 +133,14 @@ export class AuthService {
   }
 
   async sendCode(input: {
+    channel?: unknown;
+    identifier?: unknown;
     email?: unknown;
+    phone?: unknown;
     purpose?: unknown;
     password?: unknown;
   }) {
-    const email = this.normalizeEmail(input.email);
+    const { channel, target } = this.getTarget(input);
     const purpose: CodePurpose = input.purpose === "signup" ? "signup" : "login";
     let pendingPasswordHash: string | null = null;
 
@@ -102,11 +148,14 @@ export class AuthService {
       const password = typeof input.password === "string" ? input.password : "";
       pendingPasswordHash = await this.hashPassword(password);
       const existing = await this.database.query<UserRow>(
-        "SELECT id, email, password_hash FROM users WHERE email = $1 LIMIT 1",
-        [email],
+        `SELECT id, email, phone, password_hash FROM users
+         WHERE ${channel === "email" ? "email" : "phone"} = $1 LIMIT 1`,
+        [target],
       );
       if (existing.rows[0]?.password_hash) {
-        throw new ConflictException("这个邮箱已经注册，可以直接登录。");
+        throw new ConflictException(
+          `这个${channel === "email" ? "邮箱" : "手机号"}已经注册，可以直接登录。`,
+        );
       }
     }
 
@@ -117,9 +166,9 @@ export class AuthService {
       `SELECT
          MAX(created_at) AS latest_created_at,
          COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '1 hour') AS hourly_count
-       FROM email_verification_codes
-       WHERE email = $1`,
-      [email],
+       FROM verification_codes
+       WHERE target = $1 AND channel = $2`,
+      [target, channel],
     );
     const latest = rate.rows[0]?.latest_created_at;
     if (latest && Date.now() - new Date(latest).getTime() < OTP_RESEND_SECONDS * 1000) {
@@ -138,17 +187,28 @@ export class AuthService {
     const code = String(randomInt(100000, 1000000));
     const id = randomUUID();
     await this.database.query(
-      `INSERT INTO email_verification_codes
-        (id, email, purpose, code_hash, pending_password_hash, expires_at)
-       VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '${OTP_TTL_MINUTES} minutes')`,
-      [id, email, purpose, this.hashCode(email, purpose, code), pendingPasswordHash],
+      `INSERT INTO verification_codes
+        (id, target, channel, purpose, code_hash, pending_password_hash, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW() + INTERVAL '${OTP_TTL_MINUTES} minutes')`,
+      [
+        id,
+        target,
+        channel,
+        purpose,
+        this.hashCode(channel, target, purpose, code),
+        pendingPasswordHash,
+      ],
     );
 
     try {
-      await this.mailer.sendVerificationCode(email, code);
+      if (channel === "email") {
+        await this.mailer.sendVerificationCode(target, code);
+      } else {
+        await this.sms.sendVerificationCode(target, code);
+      }
     } catch (error) {
       await this.database.query(
-        "DELETE FROM email_verification_codes WHERE id = $1",
+        "DELETE FROM verification_codes WHERE id = $1",
         [id],
       );
       throw error;
@@ -157,8 +217,15 @@ export class AuthService {
     return { ok: true, expiresInSeconds: OTP_TTL_MINUTES * 60 };
   }
 
-  async verifyCode(input: { email?: unknown; code?: unknown; purpose?: unknown }) {
-    const email = this.normalizeEmail(input.email);
+  async verifyCode(input: {
+    channel?: unknown;
+    identifier?: unknown;
+    email?: unknown;
+    phone?: unknown;
+    code?: unknown;
+    purpose?: unknown;
+  }) {
+    const { channel, target } = this.getTarget(input);
     const purpose: CodePurpose = input.purpose === "signup" ? "signup" : "login";
     const code = typeof input.code === "string" ? input.code.trim() : "";
     if (!/^\d{6}$/.test(code)) {
@@ -170,10 +237,10 @@ export class AuthService {
       await client.query("BEGIN");
       const result = await client.query<CodeRow>(
         `SELECT id, code_hash, pending_password_hash, attempts, expires_at
-         FROM email_verification_codes
-         WHERE email = $1 AND purpose = $2 AND consumed_at IS NULL
+         FROM verification_codes
+         WHERE target = $1 AND channel = $2 AND purpose = $3 AND consumed_at IS NULL
          ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
-        [email, purpose],
+        [target, channel, purpose],
       );
       const record = result.rows[0];
       if (!record || new Date(record.expires_at).getTime() <= Date.now()) {
@@ -186,11 +253,14 @@ export class AuthService {
         );
       }
 
-      const actual = Buffer.from(this.hashCode(email, purpose, code), "hex");
+      const actual = Buffer.from(
+        this.hashCode(channel, target, purpose, code),
+        "hex",
+      );
       const expected = Buffer.from(record.code_hash, "hex");
       if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
         await client.query(
-          "UPDATE email_verification_codes SET attempts = attempts + 1 WHERE id = $1",
+          "UPDATE verification_codes SET attempts = attempts + 1 WHERE id = $1",
           [record.id],
         );
         await client.query("COMMIT");
@@ -198,26 +268,38 @@ export class AuthService {
       }
 
       await client.query(
-        "UPDATE email_verification_codes SET consumed_at = NOW() WHERE id = $1",
+        "UPDATE verification_codes SET consumed_at = NOW() WHERE id = $1",
         [record.id],
       );
       const existing = await client.query<UserRow>(
-        "SELECT id, email, password_hash FROM users WHERE email = $1 LIMIT 1 FOR UPDATE",
-        [email],
+        `SELECT id, email, phone, password_hash FROM users
+         WHERE ${channel === "email" ? "email" : "phone"} = $1 LIMIT 1 FOR UPDATE`,
+        [target],
       );
       let user = existing.rows[0];
       if (!user) {
         const created = await client.query<UserRow>(
-          `INSERT INTO users (id, email, password_hash, email_verified_at)
-           VALUES ($1, $2, $3, NOW())
-           RETURNING id, email, password_hash`,
-          [randomUUID(), email, record.pending_password_hash],
+          `INSERT INTO users
+            (id, email, phone, password_hash, email_verified_at, phone_verified_at)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id, email, phone, password_hash`,
+          [
+            randomUUID(),
+            channel === "email" ? target : null,
+            channel === "phone" ? target : null,
+            record.pending_password_hash,
+            channel === "email" ? new Date() : null,
+            channel === "phone" ? new Date() : null,
+          ],
         );
         user = created.rows[0];
       } else if (purpose === "signup" && record.pending_password_hash) {
         const updated = await client.query<UserRow>(
-          `UPDATE users SET password_hash = $1, email_verified_at = NOW(), updated_at = NOW()
-           WHERE id = $2 RETURNING id, email, password_hash`,
+          `UPDATE users SET
+             password_hash = $1,
+             ${channel === "email" ? "email_verified_at" : "phone_verified_at"} = NOW(),
+             updated_at = NOW()
+           WHERE id = $2 RETURNING id, email, phone, password_hash`,
           [record.pending_password_hash, user.id],
         );
         user = updated.rows[0];
@@ -238,7 +320,7 @@ export class AuthService {
     const email = this.normalizeEmail(input.email);
     const password = typeof input.password === "string" ? input.password : "";
     const result = await this.database.query<UserRow>(
-      "SELECT id, email, password_hash FROM users WHERE email = $1 LIMIT 1",
+      "SELECT id, email, phone, password_hash FROM users WHERE email = $1 LIMIT 1",
       [email],
     );
     const user = result.rows[0];
@@ -271,13 +353,20 @@ export class AuthService {
       [this.hashSessionToken(token), user.id],
     );
     await client.query("DELETE FROM auth_sessions WHERE expires_at <= NOW()");
-    return { token, user: { id: user.id, email: user.email } };
+    return {
+      token,
+      user: { id: user.id, email: user.email, phone: user.phone },
+    };
   }
 
   async getSession(token: string | undefined) {
     if (!token) throw new UnauthorizedException("尚未登录。");
-    const result = await this.database.query<{ id: string; email: string }>(
-      `SELECT users.id, users.email
+    const result = await this.database.query<{
+      id: string;
+      email: string | null;
+      phone: string | null;
+    }>(
+      `SELECT users.id, users.email, users.phone
        FROM auth_sessions
        JOIN users ON users.id = auth_sessions.user_id
        WHERE auth_sessions.token_hash = $1 AND auth_sessions.expires_at > NOW()
@@ -302,10 +391,12 @@ export class AuthService {
   async health() {
     const database = await this.database.isHealthy();
     const mail = await this.mailer.isHealthy();
+    const sms = this.sms.isConfigured();
     return {
-      ok: database && mail,
+      ok: database && (mail || sms),
       database,
       mail,
+      sms,
     };
   }
 }
