@@ -45,12 +45,22 @@ export class DatabaseService implements OnModuleDestroy {
         .query(`
           CREATE TABLE IF NOT EXISTS users (
             id UUID PRIMARY KEY,
-            email TEXT NOT NULL UNIQUE,
+            email TEXT UNIQUE,
+            phone TEXT UNIQUE,
             password_hash TEXT,
-            email_verified_at TIMESTAMPTZ NOT NULL,
+            email_verified_at TIMESTAMPTZ,
+            phone_verified_at TIMESTAMPTZ,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
           );
+
+          ALTER TABLE users ALTER COLUMN email DROP NOT NULL;
+          ALTER TABLE users ALTER COLUMN email_verified_at DROP NOT NULL;
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_verified_at TIMESTAMPTZ;
+
+          CREATE UNIQUE INDEX IF NOT EXISTS users_phone_unique_idx
+            ON users (phone) WHERE phone IS NOT NULL;
 
           CREATE TABLE IF NOT EXISTS email_verification_codes (
             id UUID PRIMARY KEY,
@@ -66,6 +76,22 @@ export class DatabaseService implements OnModuleDestroy {
 
           CREATE INDEX IF NOT EXISTS email_verification_codes_lookup_idx
             ON email_verification_codes (email, purpose, created_at DESC);
+
+          CREATE TABLE IF NOT EXISTS verification_codes (
+            id UUID PRIMARY KEY,
+            target TEXT NOT NULL,
+            channel TEXT NOT NULL CHECK (channel IN ('email', 'phone')),
+            purpose TEXT NOT NULL CHECK (purpose IN ('login', 'signup')),
+            code_hash TEXT NOT NULL,
+            pending_password_hash TEXT,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            expires_at TIMESTAMPTZ NOT NULL,
+            consumed_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          );
+
+          CREATE INDEX IF NOT EXISTS verification_codes_lookup_idx
+            ON verification_codes (target, channel, purpose, created_at DESC);
 
           CREATE TABLE IF NOT EXISTS auth_sessions (
             token_hash TEXT PRIMARY KEY,
@@ -111,4 +137,3 @@ export class DatabaseService implements OnModuleDestroy {
     await this.pool?.end();
   }
 }
-

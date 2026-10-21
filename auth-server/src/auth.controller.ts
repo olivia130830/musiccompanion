@@ -27,7 +27,14 @@ export class AuthController {
   @Post("auth/send-code")
   @HttpCode(200)
   async sendCode(
-    @Body() body: { email?: unknown; purpose?: unknown; password?: unknown },
+    @Body() body: {
+      channel?: unknown;
+      email?: unknown;
+      phone?: unknown;
+      identifier?: unknown;
+      purpose?: unknown;
+      password?: unknown;
+    },
   ) {
     return this.auth.sendCode(body);
   }
@@ -35,7 +42,14 @@ export class AuthController {
   @Post("auth/verify-code")
   @HttpCode(200)
   async verifyCode(
-    @Body() body: { email?: unknown; code?: unknown; purpose?: unknown },
+    @Body() body: {
+      channel?: unknown;
+      email?: unknown;
+      phone?: unknown;
+      identifier?: unknown;
+      code?: unknown;
+      purpose?: unknown;
+    },
     @Res({ passthrough: true }) response: Response,
   ) {
     const session = await this.auth.verifyCode(body);

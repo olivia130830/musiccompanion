@@ -5,6 +5,7 @@ import { FormEvent, useEffect, useState } from "react";
 type LoginMethod = "password" | "otp";
 type PasswordIntent = "login" | "signup";
 type CodePurpose = "login" | "signup";
+type OtpChannel = "email" | "phone";
 type ServiceStatus = "checking" | "ready" | "unavailable";
 
 function getSafeNextPath() {
@@ -40,6 +41,8 @@ export default function LoginPage() {
   const [passwordIntent, setPasswordIntent] =
     useState<PasswordIntent>("login");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [otpChannel, setOtpChannel] = useState<OtpChannel>("email");
   const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
   const [otpSent, setOtpSent] = useState(false);
@@ -51,6 +54,10 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [serviceStatus, setServiceStatus] =
     useState<ServiceStatus>("checking");
+  const [availableChannels, setAvailableChannels] = useState({
+    email: false,
+    phone: false,
+  });
 
   useEffect(() => {
     const queryError = new URLSearchParams(window.location.search).get("error");
@@ -60,8 +67,14 @@ export default function LoginPage() {
   }, []);
 
   useEffect(() => {
-    void requestAuth<{ ok: boolean }>("health")
-      .then((result) => setServiceStatus(result.ok ? "ready" : "unavailable"))
+    void requestAuth<{ ok: boolean; mail?: boolean; sms?: boolean }>("health")
+      .then((result) => {
+        setServiceStatus(result.ok ? "ready" : "unavailable");
+        setAvailableChannels({
+          email: Boolean(result.mail),
+          phone: Boolean(result.sms),
+        });
+      })
       .catch(() => setServiceStatus("unavailable"));
   }, []);
 
@@ -100,6 +113,7 @@ export default function LoginPage() {
           purpose: "signup",
         });
         setOtpPurpose("signup");
+        setOtpChannel("email");
         setOtpSent(true);
         setOtp("");
         setResendSeconds(60);
@@ -121,15 +135,17 @@ export default function LoginPage() {
 
   const sendOtp = async (purpose: CodePurpose = otpPurpose) => {
     clearFeedback();
-    if (!email.trim()) {
-      setError("请先输入邮箱地址。 ");
+    const identifier = otpChannel === "email" ? email : phone;
+    if (!identifier.trim()) {
+      setError(`请先输入${otpChannel === "email" ? "邮箱地址" : "手机号码"}。`);
       return;
     }
 
     setIsSubmitting(true);
     try {
       await requestAuth("auth/send-code", {
-        email,
+        channel: otpChannel,
+        identifier,
         purpose,
         ...(purpose === "signup" ? { password } : {}),
       });
@@ -139,7 +155,7 @@ export default function LoginPage() {
       setMessage(
         purpose === "signup"
           ? "注册验证码已经发送，请查看邮箱。"
-          : "验证码已经发送，请查看邮箱。首次使用会自动创建账号。",
+          : `验证码已经发送，请查看${otpChannel === "email" ? "邮箱" : "手机短信"}。首次使用会自动创建账号。`,
       );
     } catch (authError) {
       setError(authError instanceof Error ? authError.message : "验证码发送失败。");
@@ -163,8 +179,10 @@ export default function LoginPage() {
 
     setIsSubmitting(true);
     try {
+      const identifier = otpChannel === "email" ? email : phone;
       await requestAuth("auth/verify-code", {
-        email,
+        channel: otpChannel,
+        identifier,
         code: otp,
         purpose: otpPurpose,
       });
@@ -326,19 +344,52 @@ export default function LoginPage() {
             </form>
           ) : (
             <form className="login-form" onSubmit={handleOtpSubmit}>
-              <label htmlFor="otp-email">邮箱</label>
+              <div className="login-channel-switch" role="group" aria-label="验证码接收方式">
+                <button
+                  type="button"
+                  className={otpChannel === "email" ? "login-channel-active" : ""}
+                  disabled={otpSent}
+                  onClick={() => {
+                    setOtpChannel("email");
+                    clearFeedback();
+                  }}
+                >
+                  邮箱验证码
+                </button>
+                <button
+                  type="button"
+                  className={otpChannel === "phone" ? "login-channel-active" : ""}
+                  disabled={otpSent}
+                  onClick={() => {
+                    setOtpChannel("phone");
+                    clearFeedback();
+                  }}
+                >
+                  手机验证码
+                </button>
+              </div>
+
+              <label htmlFor="otp-identifier">
+                {otpChannel === "email" ? "邮箱" : "手机号码"}
+              </label>
               <div className="login-input-wrap">
-                <span aria-hidden="true">@</span>
+                <span aria-hidden="true">{otpChannel === "email" ? "@" : "+"}</span>
                 <input
-                  id="otp-email"
-                  name="email"
-                  type="email"
-                  autoComplete="email"
+                  id="otp-identifier"
+                  name={otpChannel}
+                  type={otpChannel === "email" ? "email" : "tel"}
+                  inputMode={otpChannel === "phone" ? "tel" : undefined}
+                  autoComplete={otpChannel === "email" ? "email" : "tel"}
                   required
                   disabled={otpSent}
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder="name@example.com"
+                  value={otpChannel === "email" ? email : phone}
+                  onChange={(event) => {
+                    if (otpChannel === "email") setEmail(event.target.value);
+                    else setPhone(event.target.value);
+                  }}
+                  placeholder={
+                    otpChannel === "email" ? "name@example.com" : "138 0000 0000"
+                  }
                 />
                 {otpSent && (
                   <button
@@ -357,7 +408,9 @@ export default function LoginPage() {
 
               {otpSent && (
                 <>
-                  <label htmlFor="login-otp">邮箱验证码</label>
+                  <label htmlFor="login-otp">
+                    {otpChannel === "email" ? "邮箱验证码" : "短信验证码"}
+                  </label>
                   <div className="login-input-wrap login-otp-wrap">
                     <span aria-hidden="true">#</span>
                     <input
@@ -395,7 +448,12 @@ export default function LoginPage() {
           {error && <p className="login-feedback login-error" role="alert">{error}</p>}
           {serviceStatus === "unavailable" && (
             <p className="login-feedback login-setup" role="status">
-              页面已经就绪。请配置 PostgreSQL 与 Gmail SMTP 后启用账号服务。
+              页面已经就绪。请配置 PostgreSQL，并至少启用邮件或短信验证码服务。
+            </p>
+          )}
+          {method === "otp" && otpChannel === "phone" && !availableChannels.phone && (
+            <p className="login-feedback login-setup" role="status">
+              手机短信尚未配置，请在服务端填写阿里云短信环境变量。
             </p>
           )}
 

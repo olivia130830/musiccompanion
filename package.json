@@ -18,6 +18,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@alicloud/dysmsapi20170525": "^4.6.0",
+    "@alicloud/openapi-client": "^0.4.15",
     "@audio/decode-webm": "^1.2.1",
     "@google/genai": "^2.9.0",
     "@nestjs/common": "^12.1.0",
